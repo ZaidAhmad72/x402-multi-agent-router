@@ -30,12 +30,25 @@ export interface FormatterOutput {
   conversions: ConversionRow[];
   svg: string;
   generatedAt: string;
+  live: boolean;
+  note?: string;
 }
+
+// Fallback only — used when the live FX API (open.er-api.com) is unreachable,
+// which has been observed to happen (a real, confirmed network outage during
+// testing, not hypothetical). Approximate, roughly-current rates as of this
+// build; still fully deterministic and non-LLM, just not live. Output is
+// clearly marked `live: false` rather than silently passing off stale
+// numbers as current — a flaky external API shouldn't take the whole agent
+// down on stage.
+const FALLBACK_RATES_FROM_USD: Record<string, number> = {
+  USD: 1, EUR: 0.865, GBP: 0.741, JPY: 159.3, INR: 87.5,
+};
 
 /** Pure work function — reused by both the payment-gated /work route and /redeem. */
 export async function runFormatter(text: string): Promise<FormatterOutput> {
   const { amount, from } = parseAmountAndCurrency(text);
-  const conversions = await fetchConversions(amount, from);
+  const { conversions, live, note } = await fetchConversions(amount, from);
 
   return {
     agent: 'formatter',
@@ -45,6 +58,8 @@ export async function runFormatter(text: string): Promise<FormatterOutput> {
     conversions,
     svg: renderBarChart(amount, from, conversions),
     generatedAt: new Date().toISOString(),
+    live,
+    ...(note ? { note } : {}),
   };
 }
 
@@ -85,16 +100,36 @@ function parseAmountAndCurrency(text: string): { amount: number; from: string } 
   return { amount, from };
 }
 
-async function fetchConversions(amount: number, from: string): Promise<ConversionRow[]> {
-  const res = await fetch(`https://open.er-api.com/v6/latest/${from}`);
-  if (!res.ok) throw new Error(`Exchange rate request failed: ${res.status}`);
-  const data = (await res.json()) as any;
-  if (data.result !== 'success') throw new Error(`Exchange rate API error: ${data.result}`);
+async function fetchConversions(
+  amount: number,
+  from: string
+): Promise<{ conversions: ConversionRow[]; live: boolean; note?: string }> {
+  try {
+    const res = await fetch(`https://open.er-api.com/v6/latest/${from}`, {
+      signal: AbortSignal.timeout(6000),
+    });
+    if (!res.ok) throw new Error(`Exchange rate request failed: ${res.status}`);
+    const data = (await res.json()) as any;
+    if (data.result !== 'success') throw new Error(`Exchange rate API error: ${data.result}`);
 
-  return TARGET_CURRENCIES.filter((c) => c !== from).map((currency) => ({
-    currency,
-    amount: Math.round(amount * data.rates[currency] * 100) / 100,
-  }));
+    const conversions = TARGET_CURRENCIES.filter((c) => c !== from).map((currency) => ({
+      currency,
+      amount: Math.round(amount * data.rates[currency] * 100) / 100,
+    }));
+    return { conversions, live: true };
+  } catch (err) {
+    console.error(`⚠ live FX API unreachable, using fallback rates: ${(err as Error).message}`);
+    const fromRateInUsd = FALLBACK_RATES_FROM_USD[from] ?? 1;
+    const conversions = TARGET_CURRENCIES.filter((c) => c !== from).map((currency) => ({
+      currency,
+      amount: Math.round(((amount / fromRateInUsd) * (FALLBACK_RATES_FROM_USD[currency] ?? 1)) * 100) / 100,
+    }));
+    return {
+      conversions,
+      live: false,
+      note: 'Live FX API unreachable — using approximate fallback rates, not current market rates.',
+    };
+  }
 }
 
 function renderBarChart(sourceAmount: number, from: string, rows: ConversionRow[]): string {

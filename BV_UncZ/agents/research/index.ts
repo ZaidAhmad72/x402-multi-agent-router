@@ -133,9 +133,14 @@ app.post('/admin/revive', (c) => {
 // debug preview can show real answers while wallets are unfunded. Not part
 // of the real product surface; remove before any real demo/judging.
 app.post('/debug/preview', async (c) => {
-  const body = await c.req.json().catch(() => ({}));
-  const task = typeof body?.task === 'string' && body.task.trim() ? body.task.trim() : 'unspecified task';
-  return c.json(await runResearch(task));
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const task = typeof body?.task === 'string' && body.task.trim() ? body.task.trim() : 'unspecified task';
+    return c.json(await runResearch(task));
+  } catch (error) {
+    console.error('Error in research debug/preview:', error);
+    return c.json({ error: error instanceof Error ? error.message : 'Internal server error' }, 500);
+  }
 });
 
 // Public endpoints — no payment required
