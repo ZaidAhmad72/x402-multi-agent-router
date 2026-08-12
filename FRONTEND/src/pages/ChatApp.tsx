@@ -16,6 +16,22 @@ type Agent = { name: string; url: string; description: string };
 type QualityGateMode = 'auto' | 'pass' | 'fail';
 type Session = { chatId: string; title: string; updatedAt: string };
 
+// Task text gets embedded twice: as a JS string literal inside an inline
+// onclick="..." attribute, which is itself inside an HTML attribute value.
+// Only escaping ' (the JS string delimiter) left " (the HTML attribute
+// delimiter) unescaped -- a task containing a double-quote (e.g. a task
+// that quotes something) would prematurely close the onclick attribute and
+// silently break the Route/Preview buttons. Escapes both delimiters, plus
+// backslashes and newlines so the JS string literal itself stays valid.
+function escapeForInlineHandler(s: string): string {
+  return s
+    .replace(/\\/g, '\\\\')
+    .replace(/'/g, "\\'")
+    .replace(/\n/g, '\\n')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;');
+}
+
 export default function ChatApp() {
   const navigate = useNavigate();
   const { username } = useParams();
@@ -275,10 +291,10 @@ export default function ChatApp() {
         sender: 'agent',
         html: `
           <div style="margin-bottom:12px;">I will route this task. Do you want to run a live payment route (max spend $${maxSpend.toFixed(2)}) or a free preview?</div>
-          <button class="btn primary" id="approve-btn" style="margin-right:8px; margin-bottom:8px;" onclick="window.dispatchEvent(new CustomEvent('execute-route', {detail: {task: '${input.replace(/'/g, "\\'")}', maxSpend: ${maxSpend}}}))">
+          <button class="btn primary" id="approve-btn" style="margin-right:8px; margin-bottom:8px;" onclick="window.dispatchEvent(new CustomEvent('execute-route', {detail: {task: '${escapeForInlineHandler(input)}', maxSpend: ${maxSpend}}}))">
             Route (Max $${maxSpend.toFixed(2)})
           </button>
-          <button class="btn" style="margin-right:8px; margin-bottom:8px; background: rgba(255,255,255,0.1);" onclick="window.dispatchEvent(new CustomEvent('execute-preview', {detail: '${input.replace(/'/g, "\\'")}'}))">
+          <button class="btn" style="margin-right:8px; margin-bottom:8px; background: rgba(255,255,255,0.1);" onclick="window.dispatchEvent(new CustomEvent('execute-preview', {detail: '${escapeForInlineHandler(input)}'}))">
             Preview (no payment)
           </button>
           <button class="btn danger" style="margin-bottom:8px;" onclick="window.dispatchEvent(new Event('cancel-task'))">Cancel</button>
