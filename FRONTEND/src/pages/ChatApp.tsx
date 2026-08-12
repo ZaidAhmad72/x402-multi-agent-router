@@ -64,6 +64,32 @@ export default function ChatApp() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, processingLogs]);
 
+  // Frontend-driven history sync
+  useEffect(() => {
+    if (!username || !chatId) return;
+    if (messages.length <= 1) return; // Don't sync just the initial greeting
+
+    const firstUserMsg = messages.find(m => m.sender === 'user');
+    let title = 'New Chat';
+    if (firstUserMsg && firstUserMsg.html) {
+      // Very simple strip of html tags to get text for the title
+      title = firstUserMsg.html.replace(/<[^>]*>?/gm, '').substring(0, 50);
+    } else if (firstUserMsg && firstUserMsg.text) {
+      title = firstUserMsg.text.substring(0, 50);
+    }
+
+    fetch('/history/update', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        username,
+        chatId,
+        title,
+        messages
+      })
+    }).catch(console.error);
+  }, [messages, chatId, username]);
+
   // Initial loads and WS connect
   useEffect(() => {
     fetchAgents();
@@ -354,6 +380,7 @@ export default function ChatApp() {
       let resultHtml = '';
 
       if (data.error) {
+        setProcessingLogs(prev => [...prev, `Error: ${data.error}`]);
         resultHtml += `
           <div class="receipt-box" style="margin-bottom:12px; border-color: var(--danger); background: rgba(239, 68, 68, 0.05);">
             <h4 style="color:var(--danger);margin-bottom:8px;">❌ Process Failed</h4>
@@ -442,9 +469,11 @@ export default function ChatApp() {
         loadSessions(username);
       }
     } catch (err: any) {
+      const errMsg = err.message || String(err);
+      setProcessingLogs(prev => [...prev, `Error: ${errMsg}`]);
       setMessages(prev => prev.filter(m => m.id !== thinkingId));
       setCurrentPhase('ERROR');
-      addMessage({ sender: 'system', html: `<div class="badge danger">Failed to connect to router: ${err.message || String(err)}</div>` });
+      addMessage({ sender: 'system', html: `<div class="badge danger">Failed to connect to router: ${errMsg}</div>` });
     }
   };
 
@@ -519,7 +548,7 @@ export default function ChatApp() {
   };
 
   return (
-    <div className="app-container" style={{ display: 'flex', position: 'relative' }}>
+    <div className="app-container" style={{ position: 'relative' }}>
       
       {/* Sidebar Overlay */}
       {isSidebarOpen && (

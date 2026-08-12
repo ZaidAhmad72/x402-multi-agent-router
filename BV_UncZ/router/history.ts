@@ -37,32 +37,35 @@ historyApp.get('/chat/:username/:chatId', async (c) => {
   }
 });
 
-export async function appendMessageToHistory(username: string, chatId: string, message: Message, title?: string) {
+historyApp.post('/update', async (c) => {
   try {
-    const doc = await historyCollection.findOne({ username, chatId });
-    if (!doc) {
-      const newDoc: HistoryDocument = {
-        username,
-        chatId,
-        title: title || 'New Chat',
-        messages: [message],
-        createdAt: new Date(),
-        updatedAt: new Date()
-      };
-      await historyCollection.insertOne(newDoc);
-    } else {
-      const updateData: any = { 
-        $push: { messages: message },
-        $set: { updatedAt: new Date() }
-      };
-      if (title && doc.title === 'New Chat') {
-        updateData.$set.title = title;
-      }
-      await historyCollection.updateOne({ username, chatId }, updateData);
+    const body = await c.req.json();
+    const { username, chatId, title, messages } = body;
+    if (!username || !chatId || !messages) return c.json({ error: 'Missing fields' }, 400);
+
+    const updateData: any = { 
+      $set: { messages, updatedAt: new Date() }
+    };
+    if (title) {
+      updateData.$set.title = title;
     }
-  } catch (err) {
-    console.error("Failed to append message to history:", err);
+
+    await historyCollection.updateOne(
+      { username, chatId },
+      updateData,
+      { upsert: true }
+    );
+    
+    // Also set createdAt if this was an upsert, we can do it with $setOnInsert
+    await historyCollection.updateOne(
+      { username, chatId },
+      { $setOnInsert: { createdAt: new Date() } }
+    );
+
+    return c.json({ success: true });
+  } catch (err: any) {
+    return c.json({ error: err.message }, 500);
   }
-}
+});
 
 export { historyApp };

@@ -31,7 +31,7 @@ import { AGENT_REGISTRY } from '../shared/constants';
 
 import { connectDB } from './db';
 import { authApp } from './auth';
-import { historyApp, appendMessageToHistory } from './history';
+import { historyApp } from './history';
 import { Message, ProcessEvent } from '../shared/types/history';
 
 config();
@@ -249,45 +249,7 @@ app.post('/route', async (c) => {
 
     sendProgress(username, "Task completed successfully", processEvents);
 
-    // Save History
-    if (username && chatId) {
-      let resultText = '';
-      Object.entries(result).forEach(([agent, output]: [string, any]) => {
-        resultText += `\n**${agent}**:\n`;
-        if (Array.isArray(output.findings)) {
-           resultText += output.findings.map((f:any) => '- ' + (f.point ?? JSON.stringify(f))).join('\n');
-        } else if (output.summary?.body) {
-           resultText += output.summary.body;
-        } else if (typeof output.svg === 'string') {
-           resultText += '[SVG Output generated]';
-        } else {
-           resultText += JSON.stringify(output);
-        }
-      });
-
-      const userMessage: Message = {
-        sender: 'user',
-        timestamp: Date.now(),
-        sections: [{ type: 'text', content: task }]
-      };
-      
-      const agentMessage: Message = {
-        sender: 'agent',
-        timestamp: Date.now() + 1,
-        sections: [
-          { type: 'process', events: processEvents },
-          { type: 'chat-element', element: 'hr' },
-          { type: 'text', content: resultText.trim() }
-        ]
-      };
-      
-      // Set the chat title to the first task string (limited to 50 chars)
-      const title = task.substring(0, 50) + (task.length > 50 ? '...' : '');
-
-      await appendMessageToHistory(username, chatId, userMessage, title);
-      await appendMessageToHistory(username, chatId, agentMessage, title);
-    }
-
+    // Return Response
     return c.json({
       phase: 'REDEEMED',
       task, maxSpend,
