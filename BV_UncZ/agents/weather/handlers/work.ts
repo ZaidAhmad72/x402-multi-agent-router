@@ -23,6 +23,7 @@ const LOCATION_STOPWORDS = new Set([
   'current', 'todays', 'get', 'whats', 'hows', 'like', 'report', 'forecast',
   'update', 'please', 'there',
   'euros', 'euro', 'dollars', 'dollar', 'rupees', 'rupee', 'pounds', 'pound', 'yen',
+  'usd', 'eur', 'gbp', 'jpy', 'inr', 'convert', 'converts', 'converting',
 ]);
 
 function isRealLocation(candidate: string): boolean {

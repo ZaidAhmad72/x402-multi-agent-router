@@ -141,28 +141,32 @@ async function fetchConversions(
   }
 }
 
+// NOT a bar chart, on purpose. A converted amount's bar length used to scale
+// with the raw number (e.g. "250 USD" -> ~217 EUR but ~39,823 JPY), which
+// visually implied JPY was worth ~180x more — backwards: every row here is
+// worth exactly the same as the source amount, by definition of a currency
+// conversion. Comparing raw numeric magnitude across currencies with very
+// different per-unit value (JPY, INR) is comparing unit-scale artifacts, not
+// value — same category error as saying "250000mm > 250m". A clean table
+// avoids implying a comparison that doesn't exist.
 function renderBarChart(sourceAmount: number, from: string, rows: ConversionRow[]): string {
-  const barHeight = 24;
-  const gap = 8;
-  const chartWidth = 320;
-  const labelColumnWidth = 60;
-  const maxAmount = Math.max(...rows.map((r) => r.amount), 1);
-  const width = labelColumnWidth + chartWidth + 90;
-  const height = rows.length * (barHeight + gap) + gap + 24;
+  const rowHeight = 28;
+  const width = 300;
+  const height = rows.length * rowHeight + 44;
+  const fmt = (n: number) => n.toLocaleString('en-US', { maximumFractionDigits: 2 });
 
-  const bars = rows
+  const rows_ = rows
     .map((r, i) => {
-      const y = 24 + gap + i * (barHeight + gap);
-      const barWidth = Math.round((r.amount / maxAmount) * chartWidth);
+      const y = 40 + i * rowHeight;
       return (
-        `<rect x="${labelColumnWidth}" y="${y}" width="${barWidth}" height="${barHeight}" fill="#4f8ef7" />` +
-        `<text x="4" y="${y + barHeight / 2 + 4}" font-size="12" font-family="monospace">${r.currency}</text>` +
-        `<text x="${labelColumnWidth + barWidth + 4}" y="${y + barHeight / 2 + 4}" font-size="12" font-family="monospace">${r.amount}</text>`
+        `<rect x="0" y="${y - 16}" width="4" height="20" fill="#4f8ef7" />` +
+        `<text x="14" y="${y}" font-size="13" font-family="monospace" font-weight="bold">${r.currency}</text>` +
+        `<text x="70" y="${y}" font-size="13" font-family="monospace">${fmt(r.amount)}</text>`
       );
     })
     .join('');
 
-  const title = `<text x="4" y="16" font-size="13" font-family="monospace" font-weight="bold">${sourceAmount} ${from} converts to:</text>`;
+  const title = `<text x="0" y="16" font-size="13" font-family="monospace" font-weight="bold">${fmt(sourceAmount)} ${from} equals:</text>`;
 
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">${title}${bars}</svg>`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}"><g transform="translate(8,8)">${title}${rows_}</g></svg>`;
 }
