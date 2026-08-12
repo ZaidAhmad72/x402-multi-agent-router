@@ -14,6 +14,7 @@ import { quoteAgents, LivenessError } from './quote';
 import { settleGroup, BudgetExceededError, GroupTooLargeError } from './settle';
 import { redeemAll, RedeemError } from './redeem';
 import { getAllBalances } from './balances';
+import { debugPreviewAll } from './debugPreview';
 import { AGENT_REGISTRY } from '../shared/constants';
 
 config();
@@ -116,6 +117,26 @@ app.post('/route', async (c) => {
       },
       502
     );
+  }
+});
+
+// DEBUG ONLY — no payment gate, no atomic group. Runs the real pipeline
+// logic against each agent's unprotected /debug/preview route, so the
+// pipeline can be exercised while wallets are unfunded. Not part of the
+// real product surface; remove before any real demo/judging.
+app.post('/debug/preview', async (c) => {
+  const body = await c.req.json().catch(() => ({}));
+  const task = typeof body?.task === 'string' && body.task.trim() ? body.task.trim() : '';
+  if (!task) {
+    return c.json({ error: 'task is required' }, 400);
+  }
+
+  try {
+    const result = await debugPreviewAll(task);
+    return c.json({ debug: true, task, result });
+  } catch (error) {
+    console.error('Debug preview failed:', error);
+    return c.json({ error: error instanceof Error ? error.message : String(error) }, 500);
   }
 });
 

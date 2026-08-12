@@ -18,6 +18,7 @@ import { bazaarResourceServerExtension } from '@x402-avm/extensions';
 
 import { handleFormatterWork } from './handlers/work';
 import { handleFormatterRedeem } from './handlers/redeem';
+import { runFormatter } from './handlers/work';
 import { isKilled, kill, revive } from './killswitch';
 import createPaymentConfig, { EndpointConfig } from './endpoints.config';
 
@@ -126,6 +127,15 @@ app.post('/admin/revive', (c) => {
   revive();
   console.log(`✓ ${AGENT_NAME} agent REVIVED via admin endpoint`);
   return c.json({ status: 'alive', agent: AGENT_NAME });
+});
+
+// DEBUG ONLY — no payment gate. Runs the same work function so the router's
+// debug preview can show real answers while wallets are unfunded. Not part
+// of the real product surface; remove before any real demo/judging.
+app.post('/debug/preview', async (c) => {
+  const body = await c.req.json().catch(() => ({}));
+  const text: string = typeof body?.text === 'string' ? body.text : '';
+  return c.json(await runFormatter(text));
 });
 
 // Public endpoints — no payment required
