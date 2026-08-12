@@ -1,45 +1,68 @@
 /**
- * Dynamic agent selection — decides which of the three registered agents a
- * task actually needs, so quote/settle N varies per request instead of
- * always being fixed at 3. Ported from reference-implementation's
- * llmExtractor.ts pattern (single Groq call, JSON mode, temperature 0).
+ * Dynamic agent selection — decides which registered agents a task actually
+ * needs, so quote/settle N varies per request instead of always being fixed.
+ * Ported from reference-implementation's llmExtractor.ts pattern (single
+ * Groq call, JSON mode, temperature 0).
  *
- * Fails open: any error (missing key, network, bad JSON) falls back to all
- * three agents — the previous fixed behaviour — so a Groq outage never
- * blocks the route, only removes the optimization.
+ * Registry-driven: the prompt is built from each AgentRegistryEntry's own
+ * `description`, and dependencies are resolved from `dependsOn` — adding a
+ * new agent to shared/constants.ts is picked up here automatically, no
+ * changes needed in this file.
+ *
+ * Fails open: any error (missing key, network, bad JSON, or an empty/invalid
+ * selection) falls back to the full registry — the previous fixed behaviour
+ * — so a Groq outage never blocks the route, only removes the optimization.
  */
 
 import { AGENT_REGISTRY, type AgentRegistryEntry } from '../shared/constants';
 
 const GROQ_MODEL = 'llama-3.3-70b-versatile';
-const ALL_AGENT_NAMES = AGENT_REGISTRY.map((a) => a.name);
 
-const SYSTEM_PROMPT = `You decide which agents a task-routing system needs to call for a given task.
+function buildSystemPrompt(): string {
+  const lines = AGENT_REGISTRY.map((a) => `- "${a.name}": ${a.description}`).join('\n');
+  const names = AGENT_REGISTRY.map((a) => `"${a.name}"`).join(', ');
+  return `You decide which agents a task-routing system needs to call for a given task.
 Available agents:
-- "research": gathers sourced factual findings about a topic. Needed for any informational, explanatory, or "tell me about X" task.
-- "writer": synthesizes research findings into a coherent written summary. Needed whenever "research" is needed, to turn raw findings into a readable answer.
-- "formatter": deterministic, non-LLM live currency conversion and chart rendering. ONLY needed when the task explicitly involves converting or comparing a monetary amount between currencies.
+${lines}
 
-Respond with ONLY a JSON object, no other text: {"agents": string[]} — a subset of ["research","writer","formatter"].
+Respond with ONLY a JSON object, no other text: {"agents": string[]} — a subset of [${names}].
 Rules:
-- If "writer" is included, "research" must be included too (writer needs findings to write from).
-- If the task has no clear currency-conversion component, omit "formatter".
-- If nothing else fits, default to {"agents":["research","writer"]}.`;
+- If an agent is included, its dependencies must be included too (the task description says what each agent needs).
+- Only include an agent if the task genuinely needs it.
+- If nothing clearly fits, return an empty array — the caller will fall back to a safe default.`;
+}
 
-function normalize(names: unknown): string[] {
-  const raw = Array.isArray(names) ? names.filter((n): n is string => typeof n === 'string' && ALL_AGENT_NAMES.includes(n)) : [];
-  const set = new Set(raw);
-  if (set.has('writer')) set.add('research');
-  if (set.size === 0) {
-    set.add('research');
-    set.add('writer');
+/** Adds every transitive dependsOn of each selected agent. */
+function withDependencies(names: Set<string>): Set<string> {
+  const byName = new Map(AGENT_REGISTRY.map((a) => [a.name, a]));
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const name of [...names]) {
+      for (const dep of byName.get(name)?.dependsOn ?? []) {
+        if (!names.has(dep)) {
+          names.add(dep);
+          changed = true;
+        }
+      }
+    }
   }
-  return ALL_AGENT_NAMES.filter((n) => set.has(n));
+  return names;
+}
+
+function normalize(rawAgents: unknown): AgentRegistryEntry[] {
+  const valid = new Set(AGENT_REGISTRY.map((a) => a.name));
+  const picked = new Set(
+    Array.isArray(rawAgents) ? rawAgents.filter((n): n is string => typeof n === 'string' && valid.has(n)) : []
+  );
+  const withDeps = withDependencies(picked);
+  if (withDeps.size === 0) return AGENT_REGISTRY; // fail open — empty/invalid selection
+  return AGENT_REGISTRY.filter((a) => withDeps.has(a.name));
 }
 
 /**
  * Returns the subset of AGENT_REGISTRY (in registry order) that the task
- * needs. Falls back to the full registry on any Groq failure.
+ * needs. Falls back to the full registry on any Groq failure or empty result.
  */
 export async function selectAgents(task: string): Promise<AgentRegistryEntry[]> {
   const apiKey = process.env.GROQ_API_KEY;
@@ -55,7 +78,7 @@ export async function selectAgents(task: string): Promise<AgentRegistryEntry[]> 
       body: JSON.stringify({
         model: GROQ_MODEL,
         messages: [
-          { role: 'system', content: SYSTEM_PROMPT },
+          { role: 'system', content: buildSystemPrompt() },
           { role: 'user', content: task },
         ],
         temperature: 0,
@@ -69,9 +92,9 @@ export async function selectAgents(task: string): Promise<AgentRegistryEntry[]> 
     const raw = data.choices?.[0]?.message?.content;
     if (!raw) throw new Error('Groq agent-selection returned no content');
 
-    const names = normalize(JSON.parse(raw)?.agents);
-    console.log(`  agent selection: [${names.join(', ')}] for task "${task}"`);
-    return AGENT_REGISTRY.filter((a) => names.includes(a.name));
+    const selected = normalize(JSON.parse(raw)?.agents);
+    console.log(`  agent selection: [${selected.map((a) => a.name).join(', ')}] for task "${task}"`);
+    return selected;
   } catch (err) {
     console.log(`  (agent selection failed, using all agents: ${(err as Error).message})`);
     return AGENT_REGISTRY;

@@ -1,9 +1,11 @@
 /**
  * Phase 3 — redeem. Router calls each agent again with the group ID + its
  * index as proof. The agent verifies on-chain that it was paid; it does not
- * trust the router. Pipelined research -> writer -> formatter so the
- * assembled result is coherent (atomic payment is not atomic execution —
- * this ordering is a content-quality choice, not a payment guarantee).
+ * trust the router. Pipelined in registry/dependency order (see
+ * shared/constants.ts's buildInput) so the assembled result is coherent
+ * (atomic payment is not atomic execution — this ordering is a
+ * content-quality choice, not a payment guarantee). Registry-driven: adding
+ * an agent to AGENT_REGISTRY is picked up here automatically.
  */
 
 import { AGENT_REGISTRY } from '../shared/constants';
@@ -48,39 +50,31 @@ export async function redeemAll(
   task: string,
   quotes: AgentQuote[],
   settlement: SettlementResult
-): Promise<{ research?: any; writer?: any; formatter?: any }> {
+): Promise<Record<string, any>> {
   console.log('\nREDEEM — calling each selected agent with its group ID + index as proof...');
 
   const selected = new Set(quotes.map((q) => q.agent));
-  const out: { research?: any; writer?: any; formatter?: any } = {};
+  const outputs: Record<string, any> = {};
 
   // Dynamic agent selection (selectAgents.ts) means the group may not contain
-  // all three agents — only redeem, and only wire up dependencies for, the
-  // ones that were actually quoted and settled.
-  if (selected.has('research')) {
-    const research = findAgent('research', quotes, settlement);
-    out.research = await redeemOne('research', research.url, settlement.groupId, research.index, { task });
-    console.log(`  ✓ research redeemed (txId=${research.txId})`);
-  }
-
-  if (selected.has('writer')) {
-    const writer = findAgent('writer', quotes, settlement);
-    out.writer = await redeemOne('writer', writer.url, settlement.groupId, writer.index, {
-      task,
-      findings: out.research?.findings ?? [],
-    });
-    console.log(`  ✓ writer redeemed (txId=${writer.txId})`);
-  }
-
-  if (selected.has('formatter')) {
-    const formatter = findAgent('formatter', quotes, settlement);
-    out.formatter = await redeemOne('formatter', formatter.url, settlement.groupId, formatter.index, {
-      text: out.writer?.summary?.body ?? task,
-    });
-    console.log(`  ✓ formatter redeemed (txId=${formatter.txId})`);
+  // every registered agent — walk AGENT_REGISTRY in order (registry order is
+  // dependency order by convention) and redeem only what was actually quoted
+  // and settled, building each agent's input from prior agents' outputs via
+  // its own buildInput.
+  for (const entry of AGENT_REGISTRY) {
+    if (!selected.has(entry.name)) continue;
+    const target = findAgent(entry.name, quotes, settlement);
+    outputs[entry.name] = await redeemOne(
+      entry.name,
+      target.url,
+      settlement.groupId,
+      target.index,
+      entry.buildInput(task, outputs)
+    );
+    console.log(`  ✓ ${entry.name} redeemed (txId=${target.txId})`);
   }
 
   console.log('REDEEM complete\n');
 
-  return out;
+  return outputs;
 }

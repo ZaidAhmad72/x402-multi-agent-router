@@ -22,11 +22,42 @@ export function explorerGroupUrl(confirmedRound: number, groupId: string): strin
 export interface AgentRegistryEntry {
   name: string;
   url: string;
+  /** Shown to the Groq agent-selector (router/selectAgents.ts) so it knows when this agent is relevant. */
+  description: string;
+  /** Other agent names (by `name`) whose output this agent's buildInput reads. Auto-included when this agent is selected. */
+  dependsOn?: string[];
+  /** Builds the request body for this agent's /work and /redeem (and /debug/preview) calls from the task and prior agents' outputs, keyed by name. */
+  buildInput: (task: string, outputs: Record<string, any>) => unknown;
 }
 
-// Hardcoded by design — dynamic agent discovery (Bazaar) is out of scope (CLAUDE.md §8).
+// To add a new agent: build its service (own port/wallet/price, /work + /redeem +
+// /debug/preview routes, same shape as the three below), add its wallet to
+// .env.wallets, and add one entry here. quote.ts, settle.ts, redeem.ts,
+// debugPreview.ts, and selectAgents.ts are all registry-driven — none of them
+// need to change. (Registry is still hardcoded by design — *automatic discovery*
+// of agents not listed here, e.g. via Bazaar, stays out of scope per CLAUDE.md §8.)
 export const AGENT_REGISTRY: AgentRegistryEntry[] = [
-  { name: 'research', url: 'http://localhost:4001' },
-  { name: 'writer', url: 'http://localhost:4002' },
-  { name: 'formatter', url: 'http://localhost:4003' },
+  {
+    name: 'research',
+    url: 'http://localhost:4001',
+    description:
+      'gathers sourced factual findings about a topic. Needed for any informational, explanatory, or "tell me about X" task.',
+    buildInput: (task) => ({ task }),
+  },
+  {
+    name: 'writer',
+    url: 'http://localhost:4002',
+    description:
+      'synthesizes research findings into a coherent written summary. Needed whenever "research" is needed, to turn raw findings into a readable answer.',
+    dependsOn: ['research'],
+    buildInput: (task, outputs) => ({ task, findings: outputs.research?.findings ?? [] }),
+  },
+  {
+    name: 'formatter',
+    url: 'http://localhost:4003',
+    description:
+      'deterministic, non-LLM live currency conversion and chart rendering. ONLY needed when the task explicitly involves converting or comparing a monetary amount between currencies.',
+    dependsOn: ['writer'],
+    buildInput: (task, outputs) => ({ text: outputs.writer?.summary?.body ?? task }),
+  },
 ];

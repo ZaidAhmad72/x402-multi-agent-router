@@ -140,9 +140,10 @@
   <div class="panel">
     <h2>Phase</h2>
     <div class="phases">
-      <div class="phase-step pending" id="phase-quote"><span class="icon">1</span>QUOTE</div>
-      <div class="phase-step pending" id="phase-settle"><span class="icon">2</span>SETTLE</div>
-      <div class="phase-step pending" id="phase-redeem"><span class="icon">3</span>REDEEM</div>
+      <div class="phase-step pending" id="phase-quality"><span class="icon">1</span>QUALITY</div>
+      <div class="phase-step pending" id="phase-quote"><span class="icon">2</span>QUOTE</div>
+      <div class="phase-step pending" id="phase-settle"><span class="icon">3</span>SETTLE</div>
+      <div class="phase-step pending" id="phase-redeem"><span class="icon">4</span>REDEEM</div>
     </div>
     <div id="error-area"></div>
   </div>
@@ -166,13 +167,25 @@
   </div>
 
   <div class="panel">
-    <h2>Demo kill switch</h2>
+    <h2>Demo kill switch <span class="subtitle" style="margin:0;">(kills an agent so QUOTE fails before any money moves)</span></h2>
     <div id="admin-rows"></div>
+  </div>
+
+  <div class="panel">
+    <h2>Demo quality gate override <span class="subtitle" style="margin:0;">(forces the pre-payment quality check's outcome, for testing "bad answer -> no payment")</span></h2>
+    <div class="admin-row">
+      <button class="small" onclick="setQualityGate('auto')">Auto (real judge)</button>
+      <button class="small kill" onclick="setQualityGate('fail')">Force fail</button>
+      <button class="small revive" onclick="setQualityGate('pass')">Force pass</button>
+      <span class="admin-status" id="quality-gate-status">auto</span>
+    </div>
   </div>
 </div>
 
 <script>
-const AGENTS = ['research', 'writer', 'formatter'];
+// Populated from GET /agents on load \u2014 never hardcode agent names here, so
+// adding an agent to shared/constants.ts needs no UI changes.
+let AGENTS = [];
 
 function short(addr) {
   if (!addr) return '\u2014';
@@ -185,7 +198,7 @@ function setPhase(id, status) {
 }
 
 function resetPhases() {
-  ['quote', 'settle', 'redeem'].forEach((p) => setPhase(p, 'pending'));
+  ['quality', 'quote', 'settle', 'redeem'].forEach((p) => setPhase(p, 'pending'));
   document.getElementById('error-area').innerHTML = '';
   document.getElementById('settlement-panel').style.display = 'none';
   document.getElementById('results-panel').style.display = 'none';
@@ -224,31 +237,34 @@ function renderResults(data) {
   `;
 
   if (data.result) {
-    const r = data.result;
-    if (r.research) {
-      html += `
-      <div class="agent-block">
-        <h3>research — ${r.research.findings.length} findings <span class="tx-id">txId ${short(r.research.verifiedTxId)}</span></h3>
-        <pre>${escapeHtml(r.research.findings.map(f => '- ' + f.point).join('\\n'))}</pre>
-      </div>`;
-    }
-    if (r.writer) {
-      html += `
-      <div class="agent-block">
-        <h3>writer — summary <span class="tx-id">txId ${short(r.writer.verifiedTxId)}</span></h3>
-        <pre>${escapeHtml(r.writer.summary.body)}</pre>
-      </div>`;
-    }
-    if (r.formatter) {
-      html += `
-      <div class="agent-block">
-        <h3>formatter — deterministic chart, no LLM <span class="tx-id">txId ${short(r.formatter.verifiedTxId)}</span></h3>
-        ${r.formatter.svg}
-      </div>`;
-    }
+    html += Object.entries(data.result).map(([name, output]) => renderAgentOutput(name, output)).join('');
   }
 
   document.getElementById('results-body').innerHTML = html;
+}
+
+// Generic renderer for one agent's output — works for any agent shape, known
+// or new, so adding an agent to shared/constants.ts needs no UI changes.
+// Recognizes the common shapes already in use (findings[], summary.body,
+// svg) and falls back to pretty-printed JSON for anything else.
+function renderAgentOutput(name, output) {
+  if (!output) return '';
+  const txId = output.verifiedTxId ? ` <span class="tx-id">txId ${short(output.verifiedTxId)}</span>` : '';
+  let body;
+  if (Array.isArray(output.findings)) {
+    body = `<pre>${escapeHtml(output.findings.map(f => '- ' + (f.point ?? JSON.stringify(f))).join('\\n'))}</pre>`;
+  } else if (output.summary && typeof output.summary.body === 'string') {
+    body = `<pre>${escapeHtml(output.summary.body)}</pre>`;
+  } else if (typeof output.svg === 'string') {
+    body = output.svg;
+  } else {
+    body = `<pre>${escapeHtml(JSON.stringify(output, null, 2))}</pre>`;
+  }
+  return `
+      <div class="agent-block">
+        <h3>${escapeHtml(name)}${txId}</h3>
+        ${body}
+      </div>`;
 }
 
 function escapeHtml(s) {
@@ -261,7 +277,7 @@ async function route() {
   if (!task || !maxSpend) { alert('task and maxSpend are required'); return; }
 
   resetPhases();
-  setPhase('quote', 'active');
+  setPhase('quality', 'active');
   document.getElementById('route-btn').disabled = true;
 
   try {
@@ -272,29 +288,33 @@ async function route() {
     });
     const data = await res.json();
 
-    if (data.phase === 'QUOTE') {
+    if (data.phase === 'QUALITY') {
+      setPhase('quality', 'failed');
+      renderError(data.error, data.zeroSpend);
+    } else if (data.phase === 'QUOTE') {
+      setPhase('quality', 'done');
       setPhase('quote', 'failed');
-      setPhase('settle', 'pending');
-      setPhase('redeem', 'pending');
       renderError(data.error, data.zeroSpend);
     } else if (data.phase === 'SETTLED') {
+      setPhase('quality', 'done');
       setPhase('quote', 'done');
       setPhase('settle', 'done');
       setPhase('redeem', 'failed');
       renderError(data.error, false);
       if (data.settlement) renderSettlement(data.settlement);
     } else if (data.phase === 'REDEEMED') {
+      setPhase('quality', 'done');
       setPhase('quote', 'done');
       setPhase('settle', 'done');
       setPhase('redeem', 'done');
       renderSettlement(data.settlement);
       renderResults(data);
     } else {
-      setPhase('quote', 'failed');
+      setPhase('quality', 'failed');
       renderError(data.error || 'Unknown response', false);
     }
   } catch (err) {
-    setPhase('quote', 'failed');
+    setPhase('quality', 'failed');
     renderError(String(err), false);
   } finally {
     document.getElementById('route-btn').disabled = false;
@@ -309,7 +329,7 @@ async function preview() {
   resetPhases();
   document.getElementById('preview-btn').disabled = true;
   document.getElementById('error-area').innerHTML =
-    '<div class="error-banner" style="color: var(--muted); border-color: var(--border); background: rgba(139,147,161,0.08);">Running research \u2192 writer \u2192 formatter with no payment (debug preview)\u2026</div>';
+    '<div class="error-banner" style="color: var(--muted); border-color: var(--border); background: rgba(139,147,161,0.08);">Running every registered agent with no payment (debug preview)\u2026</div>';
 
   try {
     const res = await fetch('/debug/preview', {
@@ -327,32 +347,16 @@ async function preview() {
 
     document.getElementById('error-area').innerHTML =
       '<div class="error-banner" style="color: var(--good); border-color: var(--good); background: rgba(62,207,142,0.1);">Preview only \u2014 no payment, no atomic group, no group ID. This shows the real agent logic running for free.</div>';
-    renderPreviewResults(data.result);
+    const panel = document.getElementById('results-panel');
+    panel.style.display = 'block';
+    document.getElementById('results-body').innerHTML =
+      Object.entries(data.result).map(([name, output]) => renderAgentOutput(name, output)).join('');
   } catch (err) {
     document.getElementById('error-area').innerHTML =
       '<div class="error-banner">' + escapeHtml(String(err)) + '</div>';
   } finally {
     document.getElementById('preview-btn').disabled = false;
   }
-}
-
-function renderPreviewResults(r) {
-  const panel = document.getElementById('results-panel');
-  panel.style.display = 'block';
-  document.getElementById('results-body').innerHTML = `
-    <div class="agent-block">
-      <h3>research \u2014 ${r.research.findings.length} findings</h3>
-      <pre>${escapeHtml(r.research.findings.map(f => '- ' + f.point).join('\\n'))}</pre>
-    </div>
-    <div class="agent-block">
-      <h3>writer \u2014 summary</h3>
-      <pre>${escapeHtml(r.writer.summary.body)}</pre>
-    </div>
-    <div class="agent-block">
-      <h3>formatter \u2014 deterministic chart, no LLM</h3>
-      ${r.formatter.svg}
-    </div>
-  `;
 }
 
 async function refreshBalances() {
@@ -390,7 +394,24 @@ function renderAdminRows() {
   `).join('');
 }
 
-renderAdminRows();
+async function setQualityGate(mode) {
+  const res = await fetch('/admin/quality-gate/' + mode, { method: 'POST' });
+  const json = await res.json();
+  document.getElementById('quality-gate-status').textContent = json.qualityGateMode || mode;
+}
+
+async function loadAgents() {
+  try {
+    const res = await fetch('/agents');
+    const { agents } = await res.json();
+    AGENTS = agents.map(a => a.name);
+  } catch {
+    AGENTS = [];
+  }
+  renderAdminRows();
+}
+
+loadAgents();
 refreshBalances();
 </script>
 </body>

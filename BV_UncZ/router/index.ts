@@ -16,6 +16,7 @@ import { redeemAll, RedeemError } from './redeem';
 import { getAllBalances } from './balances';
 import { debugPreviewAll } from './debugPreview';
 import { selectAgents } from './selectAgents';
+import { runQualityGate, QualityGateError, setQualityGateMode, getQualityGateMode, type QualityGateMode } from './qualityGate';
 import { AGENT_REGISTRY } from '../shared/constants';
 
 config();
@@ -65,9 +66,21 @@ app.post('/route', async (c) => {
     return c.json({ error: 'maxSpend is required' }, 400);
   }
 
+  const registry = await selectAgents(task);
+
+  try {
+    await runQualityGate(task, registry);
+  } catch (error) {
+    if (error instanceof QualityGateError) {
+      console.error(`✗ ${error.message}`);
+      return c.json({ error: error.message, phase: 'QUALITY', zeroSpend: true, failures: error.failures }, 502);
+    }
+    console.error('Unexpected error in QUALITY phase:', error);
+    return c.json({ error: 'Internal server error' }, 500);
+  }
+
   let quotePhase;
   try {
-    const registry = await selectAgents(task);
     quotePhase = await quoteAgents(registry);
   } catch (error) {
     if (error instanceof LivenessError) {
@@ -176,6 +189,23 @@ app.post('/admin/revive/:agentId', async (c) => {
   return c.json(json, res.status as 200 | 404 | 500);
 });
 
+// Demo/testing lever for the quality gate — mirrors the agent kill switch.
+// 'auto' runs the real Groq judge; 'pass'/'fail' force the outcome so test
+// cases like "bad answer -> no payment" are reproducible on demand.
+const QUALITY_GATE_MODES: QualityGateMode[] = ['auto', 'pass', 'fail'];
+app.post('/admin/quality-gate/:mode', (c) => {
+  const mode = c.req.param('mode') as QualityGateMode;
+  if (!QUALITY_GATE_MODES.includes(mode)) {
+    return c.json({ error: `invalid mode '${mode}' — use auto, pass, or fail` }, 400);
+  }
+  setQualityGateMode(mode);
+  console.log(`⚙ quality gate mode set to '${mode}' via admin endpoint`);
+  return c.json({ status: 'ok', qualityGateMode: mode });
+});
+app.get('/admin/quality-gate', (c) => {
+  return c.json({ qualityGateMode: getQualityGateMode() });
+});
+
 app.get('/health', (c) => {
   return c.json({ status: 'ok', service: 'router', uptime: process.uptime() });
 });
@@ -183,6 +213,15 @@ app.get('/health', (c) => {
 app.get('/balances', async (c) => {
   const balances = await getAllBalances();
   return c.json({ balances });
+});
+
+// Lets the UI (and anyone else) discover the registered agents without
+// hardcoding names — adding an agent to shared/constants.ts shows up here
+// automatically.
+app.get('/agents', (c) => {
+  return c.json({
+    agents: AGENT_REGISTRY.map((a) => ({ name: a.name, url: a.url, description: a.description, dependsOn: a.dependsOn ?? [] })),
+  });
 });
 
 // Minimal UI — served as static files from ../ui, index.html at '/'.
