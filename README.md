@@ -29,6 +29,14 @@ one produced a real group ID you can click open on the Algorand testnet explorer
 actual payments. This was *the* blocker for the whole project — it's gone. Full proof with the
 actual group IDs: [`explainer.md` §12](explainer.md#12-the-funding-blocker-is-resolved--real-on-chain-proof).
 
+**Heads up if you see `/balances` showing everyone at 0:** that's not the money disappearing —
+it's `testnet-api.algonode.cloud` (the public node we read balances from) being intermittently
+slow/unreachable, which has happened on and off all project. The dashboard fails open to
+showing `0` when it can't reach the node, rather than crashing. The real proof is the group
+IDs above, which don't depend on that endpoint being up right now — re-check balances once it
+recovers, and run a fresh `check-balance.ts` right before any live demo rather than trusting an
+old snapshot.
+
 ---
 
 ## 1. What's been done so far

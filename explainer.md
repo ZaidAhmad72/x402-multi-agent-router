@@ -390,6 +390,18 @@ months of this project's timeline — a real, confirmed, explorer-verifiable gro
 the plain multi-agent payout case and the stake+slash case. Screenshot the explorer pages
 before the demo in case testnet is flaky on the day.
 
+**A concrete reason to take that last sentence seriously:** minutes after capturing the three
+settlements above, `testnet-api.algonode.cloud` started timing out entirely — confirmed from
+the router's own host machine (not a tooling artifact), general internet unaffected, only that
+one host. `GET /balances` silently shows every wallet as `0`/`0` during an outage like this
+(`balances.ts` fails open to zero on any fetch error) — **that is not the same as the funds
+being gone.** The three group IDs above and the confirmed on-chain txIds inside them are the
+actual source of truth; re-check via the explorer links once connectivity recovers, don't
+trust a zero balance reading alone. This is the same class of transient connectivity issue
+noted earlier against the facilitator during agent startup — algonode's testnet endpoints have
+been intermittently flaky all project. Worth a `check-balance.ts` run right before walking on
+stage, not relying on a `/balances` snapshot from earlier in the day.
+
 ---
 
 ## 13. What's still left
