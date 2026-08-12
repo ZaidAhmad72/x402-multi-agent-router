@@ -1,0 +1,13 @@
+node_modules/
+.env
+.env.wallets
+.env.*.local
+dist/
+*.log
+
+# External reference clones (CLAUDE.md: read-only, never edit) — each has its
+# own nested .git, so tracking them here would create broken gitlinks.
+reference/
+
+# Local Claude Code session settings, not project config.
+.claude/settings.local.json

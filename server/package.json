@@ -1,0 +1,27 @@
+{
+  "name": "x402-avm-router-server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/server.js"
+  },
+  "dependencies": {
+    "@algorandfoundation/algokit-utils": "^10.0.0-alpha.39",
+    "@hono/node-server": "^1.13.0",
+    "@x402-avm/avm": "^2.6.1",
+    "@x402-avm/core": "^2.6.1",
+    "@x402-avm/fetch": "^2.6.1",
+    "@x402-avm/hono": "^2.6.1",
+    "dotenv": "^16.4.0",
+    "hono": "^4.6.0",
+    "tweetnacl": "^1.0.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.7.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}

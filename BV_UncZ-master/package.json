@@ -1,0 +1,17 @@
+{
+  "name": "bv-uncz",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Atomic Multi-Agent Service Router",
+  "workspaces": [
+    "shared",
+    "agents/*",
+    "router"
+  ],
+  "scripts": {
+    "dev:research": "npm run dev --workspace=agent-research",
+    "dev:writer": "npm run dev --workspace=agent-writer",
+    "dev:formatter": "npm run dev --workspace=agent-formatter",
+    "dev:router": "npm run dev --workspace=router"
+  }
+}

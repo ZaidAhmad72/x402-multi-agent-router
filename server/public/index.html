@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Multi-Agent Service Router</title>
+<style>
+  :root {
+    --bg: #0b0d12;
+    --panel: #151822;
+    --border: #262b3a;
+    --text: #e6e9f0;
+    --muted: #8992a8;
+    --accent: #4f8ef7;
+    --ok: #4fd18b;
+    --err: #f76b6b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: ui-monospace, "SF Mono", Consolas, monospace;
+    padding: 24px;
+  }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  .sub { color: var(--muted); font-size: 13px; margin-bottom: 20px; }
+  .row { display: flex; gap: 10px; margin-bottom: 20px; }
+  input {
+    flex: 1;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 10px 12px;
+    border-radius: 6px;
+    font-family: inherit;
+    font-size: 14px;
+  }
+  button {
+    background: var(--accent);
+    color: white;
+    border: none;
+    padding: 10px 18px;
+    border-radius: 6px;
+    font-family: inherit;
+    font-size: 14px;
+    cursor: pointer;
+  }
+  button:disabled { opacity: 0.5; cursor: default; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 16px;
+  }
+  .panel h2 {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--muted);
+    margin: 0 0 10px;
+  }
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    margin: 2px 4px 2px 0;
+    background: #232842;
+  }
+  .badge.on { background: var(--accent); color: white; }
+  .badge.off { color: var(--muted); }
+  .status-line { font-size: 13px; margin: 4px 0; }
+  .status-line.pending { color: var(--muted); }
+  .status-line.ok { color: var(--ok); }
+  .status-line.err { color: var(--err); }
+  a { color: var(--accent); }
+  pre {
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-size: 12px;
+    margin: 0;
+    max-height: 260px;
+    overflow-y: auto;
+  }
+  .log { grid-column: 1 / -1; }
+  .result { grid-column: 1 / -1; }
+</style>
+</head>
+<body>
+  <h1>Multi-Agent Service Router</h1>
+  <div class="sub">x402 on Algorand Testnet — pay $0.01, get weather + currency + AI analysis</div>
+
+  <div class="row">
+    <input id="task" value="Should I travel to Berlin this weekend? Check the weather, convert 50,000 rupees to euros, and give me advice." />
+    <button id="run">Route</button>
+    <button id="preview" style="background:#3a3f52;">Preview (no payment)</button>
+  </div>
+  <div class="sub" style="margin-top:-14px;">"Preview" is a debug-only shortcut that skips the payment gate entirely — real answers, but not the real protected flow. Use "Route" for the actual product.</div>
+
+  <div class="grid">
+    <div class="panel">
+      <h2>Router Decision</h2>
+      <div id="routerPanel">
+        <span class="badge off">weather</span>
+        <span class="badge off">currency</span>
+        <span class="badge off">analysis</span>
+      </div>
+      <div id="extractionPanel" class="sub" style="margin-top:8px;"></div>
+    </div>
+
+    <div class="panel">
+      <h2>Payment Status</h2>
+      <div id="paymentPanel">
+        <div class="status-line pending">Idle</div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Transaction Proof</h2>
+      <div id="txPanel">
+        <div class="status-line pending">No transaction yet</div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Execution Log</h2>
+      <div id="execPanel">
+        <div class="status-line pending">Waiting</div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Wallet Balances (live, on-chain)</h2>
+      <div id="balancesPanel">
+        <div class="status-line pending">Loading...</div>
+      </div>
+    </div>
+
+    <div class="panel log">
+      <h2>Log</h2>
+      <pre id="log"></pre>
+    </div>
+
+    <div class="panel result">
+      <h2>Final Result</h2>
+      <pre id="result">—</pre>
+    </div>
+  </div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+
+function logLine(text) {
+  const el = $("log");
+  const ts = new Date().toISOString().split("T")[1].replace("Z", "");
+  el.textContent += `[${ts}] ${text}\n`;
+  el.scrollTop = el.scrollHeight;
+}
+
+function setPayment(status, cls) {
+  $("paymentPanel").innerHTML = `<div class="status-line ${cls}">${status}</div>`;
+}
+
+function setRouterBadges(agents, extraction) {
+  const all = ["weather", "currency", "analysis"];
+  $("routerPanel").innerHTML = all
+    .map((a) => `<span class="badge ${agents.includes(a) ? "on" : "off"}">${a}</span>`)
+    .join("");
+  $("extractionPanel").textContent = extraction
+    ? extraction === "llm"
+      ? "Extracted via Groq (AI)"
+      : "Extracted via regex (Groq unavailable, fell back automatically)"
+    : "";
+}
+
+function setTx(txId) {
+  if (!txId) {
+    $("txPanel").innerHTML = `<div class="status-line err">No transaction ID returned</div>`;
+    return;
+  }
+  const url = `https://lora.algokit.io/testnet/transaction/${txId}`;
+  $("txPanel").innerHTML = `<div class="status-line ok">${txId}</div><a href="${url}" target="_blank">View on explorer &rarr;</a>`;
+}
+
+function setExec(agents, result) {
+  const lines = agents.map((a) => {
+    const outcome = result?.[a];
+    if (!outcome) return `${a}: not run`;
+    return outcome.ok ? `${a}: ok` : `${a}: FAILED — ${outcome.error}`;
+  });
+  $("execPanel").innerHTML = lines.map((l) => `<div class="status-line">${l}</div>`).join("");
+}
+
+async function refreshBalances() {
+  try {
+    const res = await fetch("/balances");
+    const data = await res.json();
+    $("balancesPanel").innerHTML = data.balances
+      .map(
+        (b) =>
+          `<div class="status-line">${b.name}: ${b.algo} ALGO, ${b.usdc} USDC</div>`
+      )
+      .join("");
+  } catch (err) {
+    $("balancesPanel").innerHTML = `<div class="status-line err">Failed to load: ${err.message}</div>`;
+  }
+}
+refreshBalances();
+
+$("run").addEventListener("click", async () => {
+  const task = $("task").value.trim();
+  if (!task) return;
+
+  $("run").disabled = true;
+  $("log").textContent = "";
+  $("result").textContent = "—";
+  setRouterBadges([]);
+  setTx(null);
+  $("execPanel").innerHTML = `<div class="status-line pending">Running...</div>`;
+
+  try {
+    logLine(`Calling GET /router/task unpaid...`);
+    setPayment("Requesting...", "pending");
+    const unpaidRes = await fetch(`/router/task?task=${encodeURIComponent(task)}`);
+    logLine(`Unpaid response: ${unpaidRes.status}`);
+    if (unpaidRes.status === 402) {
+      setPayment("402 received — price required", "pending");
+    }
+
+    logLine(`Submitting payment via server-side demo wallet...`);
+    setPayment("Paying...", "pending");
+    const runRes = await fetch("/demo/run", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ task }),
+    });
+    const data = await runRes.json();
+
+    if (!runRes.ok) {
+      setPayment(`Failed: ${data.error ?? runRes.status}`, "err");
+      logLine(`Error: ${JSON.stringify(data)}`);
+      return;
+    }
+
+    logLine(`Paid response: ${data.status}`);
+    setPayment(data.status === 200 ? "Confirmed" : `Status ${data.status}`, data.status === 200 ? "ok" : "err");
+    setTx(data.body?.txId);
+
+    const agents = data.body?.agents ?? [];
+    setRouterBadges(agents, data.body?.result?.extraction);
+    setExec(agents, data.body?.result);
+
+    $("result").textContent = JSON.stringify(data.body, null, 2);
+    logLine("Done.");
+    refreshBalances();
+  } catch (err) {
+    setPayment(`Error: ${err.message}`, "err");
+    logLine(`Exception: ${err.message}`);
+  } finally {
+    $("run").disabled = false;
+  }
+});
+
+$("preview").addEventListener("click", async () => {
+  const task = $("task").value.trim();
+  if (!task) return;
+
+  $("preview").disabled = true;
+  $("log").textContent = "";
+  $("result").textContent = "—";
+  setRouterBadges([]);
+  setTx(null);
+  setPayment("Skipped (debug preview)", "pending");
+  $("execPanel").innerHTML = `<div class="status-line pending">Running...</div>`;
+
+  try {
+    logLine(`Calling GET /debug/preview (no payment gate)...`);
+    const res = await fetch(`/debug/preview?task=${encodeURIComponent(task)}`);
+    const data = await res.json();
+
+    if (!res.ok) {
+      logLine(`Error: ${JSON.stringify(data)}`);
+      return;
+    }
+
+    setRouterBadges(data.agents ?? [], data.result?.extraction);
+    setExec(data.agents ?? [], data.result);
+    $("result").textContent = JSON.stringify(data, null, 2);
+    logLine("Done.");
+  } catch (err) {
+    logLine(`Exception: ${err.message}`);
+  } finally {
+    $("preview").disabled = false;
+  }
+});
+</script>
+</body>
+</html>
