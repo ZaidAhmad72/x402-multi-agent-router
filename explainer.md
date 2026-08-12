@@ -102,8 +102,8 @@ This is the part that's easy to assume wrong, so spelling it out plainly:
 
 **Right now, the person clicking "Route" on the dashboard never signs anything and never
 connects a wallet.** The router pays all the agents itself, out of its own pre-funded
-treasury wallet (`ROUTER_ADDR`). From the user's point of view, it looks like: type a task,
-click a button, get a result (once the router wallet actually has funds — see §12). There is
+treasury wallet (`ROUTER_ADDR` — genuinely funded as of §12). From the user's point of view,
+it looks like: type a task, click a button, get a real result and a real group ID. There is
 no "approve this payment" prompt in that flow today.
 
 That's *not* an oversight — it matches how `BV_UncZ` was scoped: the interesting, novel part
@@ -364,40 +364,61 @@ in the "Settlement" panel.
 
 ---
 
-## 12. What's still left
+## 12. The funding blocker is RESOLVED — real, on-chain proof
+
+**2026-08-12:** a teammate supplied a wallet already holding ~19.86 real testnet USDC. Swapped
+into `ROUTER_ADDR`/`ROUTER_MNEMONIC` in `.env.wallets` (gitignored, not in this repo), verified
+its balance live via algod *before* swapping it in. This was the single dominant blocker for
+the entire project (see both `PROBLEMS.md` files for the faucet saga that preceded this) — it
+is no longer a blocker. Three real settlements ran immediately after, back to back:
+
+| Task | Agents paid | Outcome | Group ID / explorer |
+|---|---|---|---|
+| "Summarize algorand x402 atomic groups..." | research, writer | both `paid` | `2o9GZEbH5hdYat/trOYW01qVR1l2a21w+rIAdvmLtsE=`, round 66237349 |
+| "Convert 250 USD to EUR" | research, writer, formatter | all `paid` | `VTvBIHhE1Vn/slppARJbOKuHO3q74SR/2h6NLlGeBKI=`, round 66237361 |
+| "Convert 250 USD to EUR" (formatter forced to fail) | research `paid`, writer `paid`, **formatter `slashed`** | 0.5 USDC rebate landed at the user address, real on-chain txId `C2UZ53WNFINFHE7OXAVR7WPC5TFTWUGJXYHOXCIOYSYUQASLY6KA` | `Z9jaMck6ajo8M2N7TPAryPAOvXu7pSRQNT+MDhWln+M=`, round 66237390 |
+
+All three: `curl` the explorer URL pattern `https://lora.algokit.io/testnet/block/<round>/group/<url-encoded-groupId>` — every one resolves to a real, multi-transaction Algorand testnet group. Balances were checked before and after each call via `GET /balances` and moved by exactly the expected amounts — no discrepancy. The third row is the actual stake+slash "money shot" (§9), not just composed and signed — **settled**, with the agent paid nothing and the user's stake-funded rebate confirmed on-chain.
+
+The stake wallet was funded the same way — 2 USDC sent from the now-flush router wallet via a
+new one-off script, `pera_wallet_setup/scripts/fund-stake-usdc.ts` (`npx tsx
+fund-stake-usdc.ts FORMATTER <microUsdc>`), not part of the live router, same pattern as
+`seed-stake.ts`.
+
+**What this changes for the PPT:** we now have exactly the artifact that was missing for
+months of this project's timeline — a real, confirmed, explorer-verifiable group ID, for both
+the plain multi-agent payout case and the stake+slash case. Screenshot the explorer pages
+before the demo in case testnet is flaky on the day.
+
+---
+
+## 13. What's still left
 
 **Next milestone, not yet started:** wiring the actual end-user-facing x402 payment flow onto
-the front of `/route` (see §4) — today the router pays from its own pre-funded wallet;
-`client/` already proves the real challenge-and-sign mechanics work, it just isn't hooked up
-to the dashboard's "Route" button yet.
-
-**The one blocker underneath testing the paid flow (and the slash) end-to-end:** every wallet
-(`USER`, `ROUTER`, `ROUTER_FEE`, `AGENT1-3`, and now `STAKE_FORMATTER`) is funded with ALGO
-and opted into the USDC ASA — but **none of them has actual USDC**. Every settlement attempt
-has been proven correct right up to `underflow on subtracting N from sender amount 0` — the
-group builds, signs, and submits for real, it just can't move funds that don't exist. This has
-been the dominant time sink of the entire project (see both `PROBLEMS.md` files for the full
-faucet saga). Until real testnet USDC lands in `ROUTER_ADDR` (and `STAKE_FORMATTER_ADDR`, for
-a real slash), we don't have the single most important artifact for the PPT: a real,
-confirmed, explorer-verifiable group ID.
+the front of `/route` (see §4) — today the router pays from its own pre-funded wallet (now
+genuinely funded, see §12); `client/` already proves the real challenge-and-sign mechanics
+work, it just isn't hooked up to the dashboard's "Route" button yet.
 
 **Not yet done at all:** demo rehearsal, PPT slides, the fresh-clone integration test.
 
 ---
 
-## 13. How to test the different scenarios (no funds needed for any of these)
+## 14. How to test the different scenarios
 
-All of these work right now, without any testnet USDC, because they all fail (correctly)
-*before* the SETTLE phase, which is the only step that actually needs funds.
+As of §12, `ROUTER_ADDR` is genuinely funded, so the normal-task case below now actually
+settles for real. Every other case here still needs no funds at all — they fail (correctly)
+*before* the SETTLE phase, which is the only step that ever needed money.
 
 **Normal task, everything healthy:**
 ```bash
 curl -X POST http://localhost:4000/route -H "Content-Type: application/json" \
   -d '{"task":"Explain how Algorand consensus works","maxSpend":0.10}'
 ```
-Expect: passes QUALITY, passes QUOTE (agents challenge with 402), fails at SETTLE with the
-clear "router wallet needs funding" message — proves everything works except the very last,
-funds-dependent step.
+Expect: `phase: "REDEEMED"`, a real `settlement.groupId` + `explorerUrl`, and every agent in
+`receipt` marked `"outcome":"paid"` — a real, complete, on-chain settlement (see §12 for three
+already-captured examples). If your own `.env.wallets` isn't funded, this instead fails
+cleanly at SETTLE with a clear "router wallet needs funding" message — still proves everything
+up to that point works.
 
 **"Not good enough answer → no payment" (the quality gate rejecting):**
 ```bash
@@ -449,8 +470,11 @@ curl -X POST http://localhost:4000/admin/quality-gate/target-clear   # reset whe
 ```
 Expect: `qualityVerdicts` shows research/writer passing (real judge) and formatter failing
 with `staked: true`. The route does **not** abort — it proceeds into QUOTE and SETTLE, and
-`router.out.log` shows `SETTLE — building one atomic group: 2 payout(s) + 1 slash(es) + ...`
-before failing at the same familiar funding step, one level deeper than usual (see §9).
+`router.out.log` shows `SETTLE — building one atomic group: 2 payout(s) + 1 slash(es) + ...`.
+With a funded router + stake wallet this now actually settles: `receipt` shows research/writer
+`"paid"` and formatter `"slashed"` with a real `rebateToUser` — this exact sequence is how the
+real slash in §9/§12 was captured. Without stake wallet funds it fails cleanly one step further
+than the base flow (same underflow, on the stake wallet instead of the router).
 
 **Self-test the replay guard** (no group/task needed at all):
 ```bash
@@ -466,7 +490,7 @@ SETTLE → REDEEM) turn red at whichever step failed, with the same error text, 
 
 ---
 
-## 14. Running it yourself
+## 15. Running it yourself
 
 ```bash
 cd BV_UncZ
@@ -489,11 +513,14 @@ curl -X POST http://localhost:4000/debug/preview -H "Content-Type: application/j
   -d '{"task":"why atomic transaction groups matter"}'
 ```
 
-Try the real thing (will fail cleanly until `ROUTER_ADDR` has USDC — see §12):
+Try the real thing — as of §12, `ROUTER_ADDR` is genuinely funded, so this now actually settles:
 ```bash
 curl -X POST http://localhost:4000/route -H "Content-Type: application/json" \
   -d '{"task":"test","maxSpend":0.10}'
 ```
+If your own `.env.wallets` doesn't have a funded `ROUTER_ADDR` yet, this will still fail
+cleanly with a clear "needs funding" message instead of a generic error — see §12 for how we
+got ours funded.
 
 Full x402 client loop against one agent directly (the real payment mechanics, proven — see §4):
 ```bash

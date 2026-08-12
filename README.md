@@ -20,6 +20,17 @@ table below).
 
 ---
 
+## 🎉 We're funded — this actually works now, for real
+
+**2026-08-12:** a teammate shared a wallet that already had real testnet USDC in it. Swapped it
+in as the router's wallet, and every payment flow that's been "proven correct but blocked on
+money" all session **just settled for real** — three times in a row, including a real slash. Each
+one produced a real group ID you can click open on the Algorand testnet explorer and see the
+actual payments. This was *the* blocker for the whole project — it's gone. Full proof with the
+actual group IDs: [`explainer.md` §12](explainer.md#12-the-funding-blocker-is-resolved--real-on-chain-proof).
+
+---
+
 ## 1. What's been done so far
 
 - **Three paid agents are live**: research ($0.03), writer ($0.02), formatter ($0.01), each on
@@ -54,8 +65,8 @@ table below).
 - **Stake + slash — the "wow" feature.** One agent (formatter) has its own dedicated stake wallet
   that the router controls. If that agent's answer fails the quality check, it gets paid nothing
   and its stake pays a rebate straight to the user instead — in the *same* single transaction as
-  everyone else's normal payment. Verified live, all the way down to real transaction signatures,
-  blocked only by the same test-money problem as everything else (see below).
+  everyone else's normal payment. **Ran for real** — formatter got nothing, the user got a real
+  0.5 USDC rebate, research and writer got paid normally, all in one confirmed group.
 - **Self-test replay button** — judges can fire several identical payment-proof attempts at an
   agent with one click and watch, live, that only one is ever accepted and the rest are correctly
   rejected as duplicates.
@@ -67,23 +78,17 @@ table below).
   of its own pre-loaded wallet — clicking "Route" doesn't ask you to sign or approve anything.
   The actual "user pays" flow (get asked for payment, sign it, retry) is proven to work as a
   separate standalone test (`BV_UncZ/client/`), it just isn't hooked up to the "Route" button
-  yet. This is explicitly the next thing to build.
-- **Get real test-money into the router's wallet (and the new stake wallet).** The single
-  blocker holding back a fully completed live demo of the *existing* atomic-payment and
-  stake-slash flows. Everything has been proven correct right up to the very last step — the
-  group can't actually move money because neither wallet has test-USDC in it. (This is fake/test
-  money with zero real value — see the note at the bottom — but we still need *some* of it to
-  prove the payment actually lands on-chain.)
-- **Demo rehearsal and slides** — not started yet.
+  yet. This is the last real piece of unfinished architecture.
+- **Demo rehearsal and slides** — not started yet, now unblocked (we have real proof to show).
 - **A clean "clone the repo and run it" test** — making sure someone starting from scratch can
   get it running without hitting the setup snags we already worked through.
 
 ## 3. What's being worked on right now
 
-Nothing is actively mid-task. The most recent completed steps were stake + slash and the
-self-test replay button. Next up: wiring real user-facing payment onto the "Route" button, and
-getting the router's wallet (and the new stake wallet) funded with test-USDC so a fully
-completed, real, on-chain payment — including a real slash — can actually be shown.
+Nothing is actively mid-task. The most recent milestone: the router's wallet got funded with
+real testnet USDC and every payment flow (plain multi-agent payout, and the stake+slash) has now
+been run for real, not just proven up to the funding wall. Next up: wiring real user-facing
+payment onto the "Route" button, and starting demo/slide prep.
 
 ## 4. What was ported from Zaid's `reference-implementation/`
 
@@ -106,11 +111,12 @@ demonstrate that, so that design wasn't brought over.
 
 Click "Route" today and **you won't be asked to sign or approve anything.** The router pays all
 the agents itself, out of its own pre-loaded test wallet — like a company card, not your own
-wallet. That's intentional for this stage: the hard, novel part (paying several agents in one
-unbreakable transaction) is what's built and proven. The normal, well-understood part (a real
-person's wallet paying for something over x402) is proven separately as a standalone test, just
-not connected to the dashboard yet — that's the "what's left" item above. Full explanation with
-the technical reasoning: [`explainer.md` §4](explainer.md#4-how-payment-actually-works-from-a-users-perspective--read-this-carefully).
+wallet — and, as of the funding update above, that card actually has money on it now. That's
+intentional for this stage: the hard, novel part (paying several agents in one unbreakable
+transaction) is what's built, proven, *and now actually working end to end*. The normal,
+well-understood part (a real person's wallet paying for something over x402) is proven separately
+as a standalone test, just not connected to the dashboard yet — that's the "what's left" item
+above. Full explanation with the technical reasoning: [`explainer.md` §4](explainer.md#4-how-payment-actually-works-from-a-users-perspective--read-this-carefully).
 
 ## 6. How to test the tricky cases yourself
 
@@ -123,7 +129,7 @@ money would move:
 - **Spending limit too low**: route a currency task with a tiny `maxSpend` (e.g. `0.01`) — it refuses before signing anything.
 - **Prove the anti-replay guard**: `curl -X POST http://localhost:4000/self-test/replay -d '{"agent":"research","n":6}'` — watch exactly 1 of 6 identical attempts get accepted.
 
-Full commands and expected output for each: [`explainer.md` §13](explainer.md#13-how-to-test-the-different-scenarios-no-funds-needed-for-any-of-these).
+Full commands and expected output for each: [`explainer.md` §14](explainer.md#14-how-to-test-the-different-scenarios).
 
 ---
 
@@ -142,8 +148,9 @@ npm run dev:router      # port 4000 — dashboard at http://localhost:4000
 ```
 
 On the dashboard, click **"Preview (no payment)"** to see real agent output with zero test money
-needed, or **"Route"** to run the real payment flow (will show a clear "needs funding" message
-until the router wallet has test-USDC).
+needed, or **"Route"** to run the real payment flow — with our current `.env.wallets`, this now
+actually settles for real (see the funding update above); with your own unfunded wallets it'll
+show a clear "needs funding" message instead of a generic error.
 
 Full details, architecture diagrams, and every bug we hit along the way:
 [`explainer.md`](explainer.md) · [`BV_UncZ/README.md`](BV_UncZ/README.md) ·
