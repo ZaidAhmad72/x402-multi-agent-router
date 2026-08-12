@@ -12,6 +12,8 @@
   --text-muted: #8b93a1;
   --text-accent: #60a5fa;
   
+  --primary: #8b5cf6;
+  --primary-rgb: 139, 92, 246;
   --accent-color: #3b82f6;
   --accent-hover: #2563eb;
   --success: #10b981;
@@ -398,4 +400,215 @@ pre {
   font-size: 13px;
   color: var(--accent-color);
   margin-bottom: 6px;
+}
+
+/* Landing Page Styles */
+.landing-container {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px;
+  position: relative;
+  overflow: hidden;
+}
+
+.landing-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 60px;
+  max-width: 1200px;
+  width: 100%;
+  z-index: 1;
+}
+
+@media (max-width: 900px) {
+  .landing-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.hero-section {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.hero-title {
+  font-size: 48px;
+  font-weight: 700;
+  line-height: 1.1;
+  margin-bottom: 24px;
+  color: #fff;
+}
+
+.text-gradient {
+  background: linear-gradient(90deg, var(--primary) 0%, var(--accent-color) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.hero-subtitle {
+  font-size: 18px;
+  color: var(--text-muted);
+  margin-bottom: 40px;
+  line-height: 1.5;
+}
+
+.badge-glow {
+  display: inline-flex;
+  align-items: center;
+  padding: 8px 16px;
+  border-radius: 20px;
+  background: rgba(var(--primary-rgb), 0.15);
+  border: 1px solid rgba(var(--primary-rgb), 0.3);
+  color: var(--primary);
+  font-size: 14px;
+  font-weight: 500;
+  margin-bottom: 24px;
+  width: fit-content;
+  box-shadow: 0 0 20px rgba(var(--primary-rgb), 0.2);
+}
+
+.feature-list {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.feature-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.feature-icon {
+  background: rgba(255,255,255,0.05);
+  padding: 10px;
+  border-radius: 12px;
+  color: var(--primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(255,255,255,0.1);
+}
+
+/* Auth Section */
+.auth-section {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.auth-panel {
+  width: 100%;
+  max-width: 400px;
+  padding: 30px;
+}
+
+.auth-tabs {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 30px;
+  background: rgba(0,0,0,0.2);
+  padding: 6px;
+  border-radius: var(--radius-md);
+}
+
+.auth-tab {
+  flex: 1;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  padding: 10px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-weight: 600;
+  transition: all 0.2s ease;
+}
+
+.auth-tab.active {
+  background: var(--bg-surface);
+  color: #fff;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+}
+
+.form-group {
+  margin-bottom: 20px;
+}
+
+.form-group label {
+  display: block;
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+
+.input-with-icon {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.input-with-icon svg {
+  position: absolute;
+  left: 12px;
+  color: var(--text-muted);
+}
+
+.input-with-icon input {
+  width: 100%;
+  padding: 12px 12px 12px 40px;
+  background: rgba(0,0,0,0.2);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: var(--radius-sm);
+  color: #fff;
+  font-size: 14px;
+  transition: all 0.2s ease;
+}
+
+.input-with-icon input:focus {
+  outline: none;
+  border-color: var(--primary);
+  background: rgba(0,0,0,0.3);
+}
+
+.full-width {
+  width: 100%;
+}
+
+/* Processing Logs */
+.processing-logs {
+  background: rgba(0,0,0,0.2);
+  border: 1px solid rgba(255,255,255,0.05);
+  border-radius: var(--radius-sm);
+  padding: 12px;
+  margin-bottom: 16px;
+}
+
+/* Voice Recognition Sound Waves */
+.sound-waves {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  height: 12px;
+}
+
+.sound-waves .wave {
+  width: 3px;
+  height: 100%;
+  background-color: var(--primary);
+  border-radius: 2px;
+  transform-origin: bottom;
+  animation: fluctuate 0.5s ease-in-out infinite alternate;
+}
+
+.sound-waves .wave:nth-child(1) { animation-delay: 0.0s; }
+.sound-waves .wave:nth-child(2) { animation-delay: 0.2s; }
+.sound-waves .wave:nth-child(3) { animation-delay: 0.4s; }
+.sound-waves .wave:nth-child(4) { animation-delay: 0.1s; }
+
+@keyframes fluctuate {
+  0% { transform: scaleY(0.2); }
+  100% { transform: scaleY(1); }
 }
