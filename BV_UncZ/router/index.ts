@@ -85,6 +85,18 @@ app.post('/route', async (c) => {
       return c.json({ error: error.message, phase: 'QUOTE', zeroSpend: true }, 400);
     }
     console.error('Unexpected error in SETTLE phase:', error);
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.includes('underflow on subtracting')) {
+      return c.json(
+        {
+          error:
+            'Settlement failed: the router wallet (ROUTER_ADDR) does not have enough testnet USDC to pay all agents. Fund it and retry — nothing was spent.',
+          phase: 'QUOTE',
+          zeroSpend: true,
+        },
+        502
+      );
+    }
     return c.json({ error: 'Internal server error' }, 500);
   }
 
