@@ -47,10 +47,18 @@ table below).
 - **Any teammate can add a new agent without touching the core router code** — one entry in a
   registry file (name, port, description, what it needs from other agents) and the quoting,
   paying, redeeming, and dashboard all pick it up automatically.
-- **Quality gate — the "wow" feature.** Before any agent is even asked for a price, the router
-  quietly runs each one for free and has an AI judge check the output is actually good. A bad
-  answer aborts the whole thing with zero money spent, before payment is even discussed. There's
-  also a manual override for reliable live demos (`force pass` / `force fail` buttons).
+- **Quality gate.** Before any agent is even asked for a price, the router quietly runs each one
+  for free and has an AI judge check the output is actually good. There's also a manual override
+  for reliable live demos (force pass / force fail — either for everyone, or targeted at one
+  specific agent).
+- **Stake + slash — the "wow" feature.** One agent (formatter) has its own dedicated stake wallet
+  that the router controls. If that agent's answer fails the quality check, it gets paid nothing
+  and its stake pays a rebate straight to the user instead — in the *same* single transaction as
+  everyone else's normal payment. Verified live, all the way down to real transaction signatures,
+  blocked only by the same test-money problem as everything else (see below).
+- **Self-test replay button** — judges can fire several identical payment-proof attempts at an
+  agent with one click and watch, live, that only one is ever accepted and the rest are correctly
+  rejected as duplicates.
 - **GitHub repo set up**, both projects pushed, documented, and kept in sync.
 
 ## 2. What's left
@@ -60,21 +68,22 @@ table below).
   The actual "user pays" flow (get asked for payment, sign it, retry) is proven to work as a
   separate standalone test (`BV_UncZ/client/`), it just isn't hooked up to the "Route" button
   yet. This is explicitly the next thing to build.
-- **Get real test-money into the router's wallet.** The single blocker holding back a fully
-  completed live demo of the *existing* atomic-payment flow. Everything has been proven correct
-  right up to the very last step — the group can't actually move money because the router's
-  wallet has zero test-USDC in it. (This is fake/test money with zero real value — see the note
-  at the bottom — but we still need *some* of it to prove the payment actually lands on-chain.)
+- **Get real test-money into the router's wallet (and the new stake wallet).** The single
+  blocker holding back a fully completed live demo of the *existing* atomic-payment and
+  stake-slash flows. Everything has been proven correct right up to the very last step — the
+  group can't actually move money because neither wallet has test-USDC in it. (This is fake/test
+  money with zero real value — see the note at the bottom — but we still need *some* of it to
+  prove the payment actually lands on-chain.)
 - **Demo rehearsal and slides** — not started yet.
 - **A clean "clone the repo and run it" test** — making sure someone starting from scratch can
   get it running without hitting the setup snags we already worked through.
 
 ## 3. What's being worked on right now
 
-Nothing is actively mid-task. The most recent completed steps were the quality gate, making the
-agent list pluggable, and picking agents per task automatically. Next up: wiring real user-facing
-payment onto the "Route" button, and getting the router's wallet funded with test-USDC so a fully
-completed, real, on-chain payment can actually be shown.
+Nothing is actively mid-task. The most recent completed steps were stake + slash and the
+self-test replay button. Next up: wiring real user-facing payment onto the "Route" button, and
+getting the router's wallet (and the new stake wallet) funded with test-USDC so a fully
+completed, real, on-chain payment — including a real slash — can actually be shown.
 
 ## 4. What was ported from Zaid's `reference-implementation/`
 
@@ -109,10 +118,12 @@ No test-money needed for any of these — they all fail (correctly, on purpose) 
 money would move:
 
 - **A bad/low-quality answer → no payment**: `curl -X POST http://localhost:4000/admin/quality-gate/fail`, then try routing anything. Reset with `.../auto`.
+- **A bad answer from specifically the staked agent → it gets slashed, others still get paid**: `curl -X POST http://localhost:4000/admin/quality-gate/target/formatter`, then route a currency task. Reset with `.../target-clear`.
 - **One agent goes down mid-task**: `curl -X POST http://localhost:4000/admin/kill/writer`, then try routing anything. Reset with `.../admin/revive/writer`.
 - **Spending limit too low**: route a currency task with a tiny `maxSpend` (e.g. `0.01`) — it refuses before signing anything.
+- **Prove the anti-replay guard**: `curl -X POST http://localhost:4000/self-test/replay -d '{"agent":"research","n":6}'` — watch exactly 1 of 6 identical attempts get accepted.
 
-Full commands and expected output for each: [`explainer.md` §10](explainer.md#10-how-to-test-the-different-scenarios-no-funds-needed-for-any-of-these).
+Full commands and expected output for each: [`explainer.md` §13](explainer.md#13-how-to-test-the-different-scenarios-no-funds-needed-for-any-of-these).
 
 ---
 

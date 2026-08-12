@@ -4,48 +4,65 @@
  * spending happens, every selected agent is trial-run for free via its own
  * /debug/preview route (same call debugPreview.ts uses), and a Groq judge
  * scores whether each trial output is actually a substantive, relevant
- * answer to the task. If any agent's trial output fails, the whole route
- * aborts here — zero spend, before QUOTE even runs.
+ * answer to the task.
  *
- * This does not replace the liveness/budget/group-size gates in
- * quote.ts/settle.ts; it runs before all of them, and only checks output
- * *quality*, not payment mechanics.
+ * This is what makes stake+slash (router/stake.ts, router/settle.ts)
+ * possible without inverting the x402 "pay then get work" order: quality is
+ * checked against a free trial run *before* payment, so by the time SETTLE
+ * builds the atomic group it already knows, per agent, whether to pay
+ * normally or slash. index.ts decides what to do with a failing verdict —
+ * an agent with a configured stake gets slashed in settle.ts; an unstaked
+ * agent failing still aborts the whole route with zero spend, same as
+ * before this feature existed.
  *
  * Fails open on any Groq error (same policy as selectAgents.ts) — an LLM
  * outage should never block the whole route, only skip the extra check.
  *
  * `forceMode` is a demo/testing lever (mirrors the agent kill switch): set
  * via POST /admin/quality-gate/:mode so specific test cases ("bad answer ->
- * no payment") are reproducible without depending on a live judge call
- * agreeing to reject on demand.
+ * no payment" or "bad answer -> slash") are reproducible without depending
+ * on a live judge call agreeing to reject on demand.
  */
 
 import type { AgentRegistryEntry } from '../shared/constants';
+import { getStakeConfig } from './stake';
 import { previewOne } from './previewCall';
 
 const GROQ_MODEL = 'llama-3.3-70b-versatile';
 
-export class QualityGateError extends Error {
-  failures: { agent: string; reason: string }[];
-  constructor(failures: { agent: string; reason: string }[]) {
-    super(
-      `Quality gate rejected ${failures.length} agent output(s) before any payment: ` +
-        failures.map((f) => `${f.agent} (${f.reason})`).join('; ')
-    );
-    this.name = 'QualityGateError';
-    this.failures = failures;
-  }
+export interface QualityVerdict {
+  agent: string;
+  ok: boolean;
+  reason: string;
+  /** Whether this agent has a stake wallet configured — determines whether a failure slashes or aborts. */
+  staked: boolean;
 }
 
 export type QualityGateMode = 'auto' | 'pass' | 'fail';
 let forceMode: QualityGateMode = 'auto';
+// Targeted override, independent of forceMode: forces exactly one named
+// agent to fail while every other agent still runs the real trial+judge (or
+// forced pass/fail, if forceMode is also set). Lets a demo isolate "only
+// the staked agent's output is bad" -> slash, without also forcing
+// research/writer to fail (which would abort the whole route, since they
+// have no stake to fall back on). Cleared automatically by setQualityGateMode.
+let forcedFailAgent: string | null = null;
 
 export function setQualityGateMode(mode: QualityGateMode): void {
   forceMode = mode;
+  forcedFailAgent = null;
 }
 
 export function getQualityGateMode(): QualityGateMode {
   return forceMode;
+}
+
+export function setForcedFailAgent(agent: string | null): void {
+  forcedFailAgent = agent;
+}
+
+export function getForcedFailAgent(): string | null {
+  return forcedFailAgent;
 }
 
 async function judgeOne(agentName: string, task: string, output: unknown): Promise<{ ok: boolean; reason: string }> {
@@ -93,40 +110,49 @@ async function judgeOne(agentName: string, task: string, output: unknown): Promi
 /**
  * Trial-runs `registry` (in order, wiring dependencies same as redeem.ts)
  * against each agent's free /debug/preview route, then judges each output.
- * Throws QualityGateError with every failing agent if any output fails.
+ * Never throws — returns one verdict per agent; the caller decides what a
+ * failing verdict means (abort vs slash) based on `staked`.
  */
-export async function runQualityGate(task: string, registry: AgentRegistryEntry[]): Promise<void> {
-  if (forceMode === 'pass') {
-    console.log('QUALITY GATE — forced PASS (demo override), skipping real judge\n');
-    return;
-  }
-  if (forceMode === 'fail') {
-    console.log('QUALITY GATE — forced FAIL (demo override)\n');
-    throw new QualityGateError(registry.map((a) => ({ agent: a.name, reason: 'forced fail (demo override)' })));
-  }
-
-  console.log(`\nQUALITY GATE — trial-running ${registry.length} agent(s) via /debug/preview before any money moves...`);
-
+export async function runQualityGate(task: string, registry: AgentRegistryEntry[]): Promise<QualityVerdict[]> {
+  const verdicts: QualityVerdict[] = [];
   const outputs: Record<string, any> = {};
-  const failures: { agent: string; reason: string }[] = [];
+
+  console.log(`\nQUALITY GATE — checking ${registry.length} agent(s) before any money moves (mode: ${forceMode})...`);
 
   for (const entry of registry) {
+    const staked = getStakeConfig(entry.name) !== null;
+
+    if (forceMode === 'pass') {
+      verdicts.push({ agent: entry.name, ok: true, reason: 'forced pass (demo override)', staked });
+      console.log(`  ✓ ${entry.name}: forced pass${staked ? ' [staked]' : ''}`);
+      continue;
+    }
+    if (forceMode === 'fail') {
+      verdicts.push({ agent: entry.name, ok: false, reason: 'forced fail (demo override)', staked });
+      console.log(`  ✗ ${entry.name}: forced fail${staked ? ' [staked -> will be slashed]' : ' [unstaked -> will abort]'}`);
+      continue;
+    }
+    if (forcedFailAgent === entry.name) {
+      verdicts.push({ agent: entry.name, ok: false, reason: 'forced fail (targeted demo override)', staked });
+      console.log(`  ✗ ${entry.name}: forced fail (targeted)${staked ? ' [staked -> will be slashed]' : ' [unstaked -> will abort]'}`);
+      continue;
+    }
+
     let output: any;
     try {
       output = await previewOne(entry.url, entry.buildInput(task, outputs));
     } catch (err) {
       const reason = `trial run failed: ${(err as Error).message}`;
+      verdicts.push({ agent: entry.name, ok: false, reason, staked });
       console.log(`  ✗ ${entry.name}: ${reason}`);
-      failures.push({ agent: entry.name, reason });
       continue;
     }
     outputs[entry.name] = output;
 
     const verdict = await judgeOne(entry.name, task, output);
-    console.log(`  ${verdict.ok ? '✓' : '✗'} ${entry.name}: ${verdict.reason}`);
-    if (!verdict.ok) failures.push({ agent: entry.name, reason: verdict.reason });
+    verdicts.push({ agent: entry.name, ok: verdict.ok, reason: verdict.reason, staked });
+    console.log(`  ${verdict.ok ? '✓' : '✗'} ${entry.name}: ${verdict.reason}${staked ? ' [staked]' : ''}`);
   }
 
-  if (failures.length > 0) throw new QualityGateError(failures);
-  console.log('QUALITY GATE passed — proceeding to QUOTE\n');
+  return verdicts;
 }

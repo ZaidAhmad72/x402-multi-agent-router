@@ -32,7 +32,7 @@ Two of us built independently before syncing up:
 
 **Decision: `BV_UncZ/` is the submission.** It's the only one of the two that actually does
 what PS0404 asks. `reference-implementation/` is kept in the repo because several of its
-pieces are genuinely better than what `BV_UncZ/` had and have been ported over — see §6.
+pieces are genuinely better than what `BV_UncZ/` had and have been ported over — see §7.
 
 ---
 
@@ -103,7 +103,7 @@ This is the part that's easy to assume wrong, so spelling it out plainly:
 **Right now, the person clicking "Route" on the dashboard never signs anything and never
 connects a wallet.** The router pays all the agents itself, out of its own pre-funded
 treasury wallet (`ROUTER_ADDR`). From the user's point of view, it looks like: type a task,
-click a button, get a result (once the router wallet actually has funds — see §8). There is
+click a button, get a result (once the router wallet actually has funds — see §12). There is
 no "approve this payment" prompt in that flow today.
 
 That's *not* an oversight — it matches how `BV_UncZ` was scoped: the interesting, novel part
@@ -146,13 +146,13 @@ x402/
 │   │   ├── writer/    (port 4002, $0.02) — real Groq synthesis of research's findings
 │   │   └── formatter/ (port 4003, $0.01) — real live currency conversion, NO LLM (hard
 │   │                                        requirement — heterogeneity is judged)
-│   ├── router/         ← index.ts (Hono app), qualityGate.ts, quote.ts, settle.ts,
-│   │                      redeem.ts, selectAgents.ts, balances.ts, debugPreview.ts,
-│   │                      previewCall.ts (shared no-payment call helper)
+│   ├── router/         ← index.ts (Hono app), qualityGate.ts, stake.ts, quote.ts, settle.ts,
+│   │                      redeem.ts, selectAgents.ts, selfTestReplay.ts, balances.ts,
+│   │                      debugPreview.ts, previewCall.ts (shared no-payment call helper)
 │   ├── client/          ← standalone x402 client loop: unpaid → 402 → signed retry → 200
 │   │                       + decoded settlement receipt, run directly against one agent
 │   ├── ui/               ← dashboard, served by the router itself at :4000
-│   └── pera_wallet_setup/scripts/ ← generate-wallets, check-balance, opt-in-usdc
+│   └── pera_wallet_setup/scripts/ ← generate-wallets, check-balance, opt-in-usdc, seed-stake
 └── reference-implementation/      ← SOURCE MATERIAL, NOT the submission
     ├── docs/PROBLEMS.md            ← its own bug log (facilitator mismatch, faucet
     │                                  failures, 4 regex bugs that motivated an LLM rewrite)
@@ -236,7 +236,8 @@ Picked from the analysis doc's shortlist (it rated this the strongest single mov
 **What it actually does:** for every agent the task selected, call its free `/debug/preview`
 route (same one the demo "Preview" button uses) to get a real trial output at zero cost, then
 send that output to a Groq judge with the prompt "is this genuinely relevant and substantive
-for the task, or not?" Any single rejection aborts the entire route — `phase: "QUALITY"`,
+for the task, or not?" A rejection either **slashes** that agent (if it has a stake configured
+— see §9) or **aborts the entire route** (if it doesn't) — `phase: "QUALITY"`,
 `zeroSpend: true` — before any agent is even asked for a price, let alone paid.
 
 **Fails open, on purpose:** if `GROQ_API_KEY` is missing or the Groq call errors, the gate
@@ -245,39 +246,146 @@ policy as `selectAgents.ts`. This is a real limitation worth saying out loud to 
 asked: the gate is a genuine safety net, not a guarantee, and it degrades gracefully rather
 than failing closed.
 
-**Demo/testing override:** relying on a live LLM to reliably reject on command during a demo
-is risky, so there's also a manual lever, same idea as the agent kill switch:
+**Demo/testing overrides:** relying on a live LLM to reliably reject on command during a demo
+is risky, so there are two manual levers, same idea as the agent kill switch:
 
 ```bash
-curl -X POST http://localhost:4000/admin/quality-gate/fail   # force every task to be rejected
-curl -X POST http://localhost:4000/admin/quality-gate/pass   # force every task to pass, skip the judge
+# Global — every agent gets the same forced verdict
+curl -X POST http://localhost:4000/admin/quality-gate/fail   # force every agent to be rejected
+curl -X POST http://localhost:4000/admin/quality-gate/pass   # force every agent to pass, skip the judge
 curl -X POST http://localhost:4000/admin/quality-gate/auto   # back to the real Groq judge (default)
+
+# Targeted — force exactly one named agent to fail, everyone else still runs the real judge.
+# This is the one to use for demoing the slash specifically (see §9) — a global force-fail
+# would also fail research/writer, which have no stake and would abort the whole route instead.
+curl -X POST http://localhost:4000/admin/quality-gate/target/formatter
+curl -X POST http://localhost:4000/admin/quality-gate/target-clear   # reset when done
 ```
-Same three buttons are on the dashboard under "Demo quality gate override."
+Matching buttons are on the dashboard under "Demo quality gate override."
 
 ---
 
-## 9. What's still left
+## 9. Novelty feature: stake + slash — accountability, not just liveness
+
+The quality gate on its own can only do one thing with a bad output: refuse to pay anyone and
+abort. That's a real guarantee (the project's original liveness gate does the same for a dead
+agent), but it doesn't distinguish "this agent is down" from "this agent responded with
+garbage" — both just mean nobody gets paid. Stake + slash adds a second, sharper outcome for
+the second case: **the offending agent gets nothing, and the user gets a rebate, in the same
+atomic group** — instead of the whole job just failing.
+
+**How it works, mechanically:**
+- One agent (`formatter`, chosen as the simplest/fastest to demo) has a dedicated **stake
+  wallet** that the router holds signing authority over — funded once, out of band, via
+  `pera_wallet_setup/scripts/seed-stake.ts` (never live in the router itself).
+- If `formatter`'s quality verdict fails, `router/settle.ts` swaps its normal payout leg
+  (`router → formatter`) for a **slash leg** (`stake wallet → user`) in the exact same
+  transaction slot, in the exact same atomic group. Same group, same one-shot commitment —
+  just a different destination for that one leg, decided by the quality verdict computed
+  *before* the group is even built (see §8 — this is only possible because quality is checked
+  against a free trial run before payment, avoiding the "pay-then-get-work" ordering problem
+  entirely).
+- An agent that fails and has **no** stake configured still aborts the whole route — the old,
+  simpler guarantee is the fallback when there's no financial accountability to reach for.
+
+**Verified live**, down to the actual blockchain boundary: targeting formatter to fail (task:
+"Convert 250 USD to EUR") produced research/writer passing the real Groq judge, formatter
+correctly marked `staked: true` and rejected, and this log line —
+
+```
+SETTLE — building one atomic group: 2 payout(s) + 1 slash(es) + 1 routing fee + 1 fee-payer txn
+```
+
+— followed by 5 real transaction IDs, meaning the composer built the group, and **both the
+router's key and the stake wallet's key signed successfully**. It only failed at submission on
+the familiar `underflow on subtracting` error — the stake wallet is real, funded with ALGO,
+and opted into the USDC ASA (via `seed-stake.ts`), but like every other wallet in this project
+has 0 actual USDC. Proven correct one step further than the base flow, blocked by the exact
+same, single known blocker (§12).
+
+**The receipt** (`POST /route`'s JSON response, and the dashboard's new "Receipt" panel) makes
+the outcome explicit per agent, not just a settled/not-settled flag:
+```json
+{
+  "receipt": [
+    { "agent": "research", "outcome": "paid", "amountUsd": 0.03 },
+    { "agent": "writer", "outcome": "paid", "amountUsd": 0.02 },
+    { "agent": "formatter", "outcome": "slashed", "amountUsd": 0.5, "rebateToUser": "<addr>", "reason": "..." }
+  ]
+}
+```
+
+**Extending to another agent:** add `STAKE_<NAME>_ADDR` / `STAKE_<NAME>_MNEMONIC` to
+`.env.wallets` (run `seed-stake.ts <NAME>` to generate+fund+opt-in one) — `router/stake.ts`
+picks it up automatically, no code changes needed. Slash amount (`SLASH_AMOUNT_MICRO_USDC` in
+`stake.ts`) is currently fixed at 0.5 USDC, deliberately decoupled from the agent's quoted
+price — it's an accountability penalty, not a fee refund.
+
+---
+
+## 10. Novelty feature: self-test replay endpoint
+
+Judge-triggerable proof that the replay guard (`shared/replayGuard.ts`) actually does what the
+README claims, instead of asking judges to take it on faith. `router/selfTestReplay.ts` fires
+N concurrent `/redeem` calls at one real, running agent, all carrying the *exact same*
+`X-PAYMENT-GROUP` / `X-PAYMENT-INDEX` pair, and reports how many got through.
+
+```bash
+curl -X POST http://localhost:4000/self-test/replay -H "Content-Type: application/json" \
+  -d '{"agent":"research","n":6}'
+```
+Verified live: 6 concurrent identical requests → exactly 1 passed the guard (and correctly
+went on to fail payment verification, since the test uses a synthetic group ID with no real
+payment behind it — a separate, already-proven concern) and 5 were rejected with `409 replay
+rejected`. This is a real race against the actual in-memory guard in the actual agent
+process — not simulated — because the guard's `Map` check runs synchronously before any
+`await`, so Node's single-threaded event loop serializes concurrent hits on the same key
+regardless of how close together the HTTP requests arrive. Also on the dashboard, under
+"Self-test: replay guard."
+
+---
+
+## 11. One item from the latest plan that doesn't apply here — flagging rather than forcing it
+
+The plan's "Hour 0–1: de-risk the integration point" step (stub an organizer-provided
+settlement API behind a mock, so the rest of the flow can be proven without it) assumes a
+different architecture than ours: a project that calls out to an **organizer-supplied
+settlement endpoint**. `BV_UncZ` doesn't have one — it settles directly against Algorand via
+`@algorandfoundation/algokit-utils`'s `AtomicTransactionComposer`, with no third-party API in
+the loop at all. There's nothing to stub; the real settlement code already exists and has been
+exercised end-to-end (see §12) — its only remaining dependency is real testnet USDC, not an
+external API. Skipping this step rather than building a stub for an integration point that
+doesn't exist in this codebase.
+
+The plan's "Hour 4–4.5: explorer deep-link" was already done before this plan arrived —
+`settlement.explorerUrl` (`shared/constants.ts`'s `explorerGroupUrl()`) has been in every
+settlement response since the original build, and the dashboard renders it as a clickable link
+in the "Settlement" panel.
+
+---
+
+## 12. What's still left
 
 **Next milestone, not yet started:** wiring the actual end-user-facing x402 payment flow onto
 the front of `/route` (see §4) — today the router pays from its own pre-funded wallet;
 `client/` already proves the real challenge-and-sign mechanics work, it just isn't hooked up
 to the dashboard's "Route" button yet.
 
-**The one blocker underneath testing the paid flow end-to-end:** every wallet (`USER`,
-`ROUTER`, `ROUTER_FEE`, `AGENT1-3`) is funded with ALGO and opted into the USDC ASA — but
-**none of them has actual USDC**. Every settlement attempt has been proven correct right up
-to `underflow on subtracting N from sender amount 0` — the group builds, signs, and submits
-for real, it just can't move funds that don't exist. This has been the dominant time sink of
-the entire project (see both `PROBLEMS.md` files for the full faucet saga). Until real
-testnet USDC lands in `ROUTER_ADDR`, we don't have the single most important artifact for the
-PPT: a real, confirmed, explorer-verifiable group ID.
+**The one blocker underneath testing the paid flow (and the slash) end-to-end:** every wallet
+(`USER`, `ROUTER`, `ROUTER_FEE`, `AGENT1-3`, and now `STAKE_FORMATTER`) is funded with ALGO
+and opted into the USDC ASA — but **none of them has actual USDC**. Every settlement attempt
+has been proven correct right up to `underflow on subtracting N from sender amount 0` — the
+group builds, signs, and submits for real, it just can't move funds that don't exist. This has
+been the dominant time sink of the entire project (see both `PROBLEMS.md` files for the full
+faucet saga). Until real testnet USDC lands in `ROUTER_ADDR` (and `STAKE_FORMATTER_ADDR`, for
+a real slash), we don't have the single most important artifact for the PPT: a real,
+confirmed, explorer-verifiable group ID.
 
 **Not yet done at all:** demo rehearsal, PPT slides, the fresh-clone integration test.
 
 ---
 
-## 10. How to test the different scenarios (no funds needed for any of these)
+## 13. How to test the different scenarios (no funds needed for any of these)
 
 All of these work right now, without any testnet USDC, because they all fail (correctly)
 *before* the SETTLE phase, which is the only step that actually needs funds.
@@ -331,12 +439,34 @@ curl -X POST http://localhost:4000/route -H "Content-Type: application/json" \
 Check `router.out.log` (or the terminal running `npm run dev:router`) for the `agent
 selection: [...]` line and the QUOTE total to see N actually change per request.
 
+**Stake + slash, isolated to just the staked agent** (the "bad answer → agent gets nothing,
+user gets rebated" case, distinct from the plain abort-everything case above):
+```bash
+curl -X POST http://localhost:4000/admin/quality-gate/target/formatter
+curl -X POST http://localhost:4000/route -H "Content-Type: application/json" \
+  -d '{"task":"Convert 250 USD to EUR","maxSpend":0.10}'
+curl -X POST http://localhost:4000/admin/quality-gate/target-clear   # reset when done
+```
+Expect: `qualityVerdicts` shows research/writer passing (real judge) and formatter failing
+with `staked: true`. The route does **not** abort — it proceeds into QUOTE and SETTLE, and
+`router.out.log` shows `SETTLE — building one atomic group: 2 payout(s) + 1 slash(es) + ...`
+before failing at the same familiar funding step, one level deeper than usual (see §9).
+
+**Self-test the replay guard** (no group/task needed at all):
+```bash
+curl -X POST http://localhost:4000/self-test/replay -H "Content-Type: application/json" \
+  -d '{"agent":"research","n":6}'
+```
+Expect: `passedGuard: 1`, `replayRejected: 5` (or whatever `n` you pick, always exactly 1
+passing). See §10 for what the numbers mean.
+
 **All of the above work identically from the dashboard** — the phase boxes (QUALITY → QUOTE →
-SETTLE → REDEEM) turn red at whichever step failed, with the same error text.
+SETTLE → REDEEM) turn red at whichever step failed, with the same error text, and the new
+"Quality gate results" / "Receipt" panels show the per-agent detail live.
 
 ---
 
-## 11. Running it yourself
+## 14. Running it yourself
 
 ```bash
 cd BV_UncZ
@@ -359,7 +489,7 @@ curl -X POST http://localhost:4000/debug/preview -H "Content-Type: application/j
   -d '{"task":"why atomic transaction groups matter"}'
 ```
 
-Try the real thing (will fail cleanly until `ROUTER_ADDR` has USDC — see §9):
+Try the real thing (will fail cleanly until `ROUTER_ADDR` has USDC — see §12):
 ```bash
 curl -X POST http://localhost:4000/route -H "Content-Type: application/json" \
   -d '{"task":"test","maxSpend":0.10}'

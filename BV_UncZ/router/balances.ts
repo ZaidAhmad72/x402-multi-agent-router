@@ -5,7 +5,8 @@
  * fee-bearing transaction themselves, so their ALGO balance stays flat.
  */
 
-import { ALGOD_TESTNET, USDC_TESTNET_ASA_ID } from '../shared/constants';
+import { ALGOD_TESTNET, USDC_TESTNET_ASA_ID, AGENT_REGISTRY } from '../shared/constants';
+import { getStakeConfig } from './stake';
 
 export interface WalletBalance {
   name: string;
@@ -39,10 +40,16 @@ async function fetchBalance(name: string, address?: string): Promise<WalletBalan
 }
 
 export async function getAllBalances(): Promise<WalletBalance[]> {
+  const stakeWallets = AGENT_REGISTRY.map((a) => {
+    const stake = getStakeConfig(a.name);
+    return stake ? fetchBalance(`stake:${a.name}`, stake.addr) : null;
+  }).filter((p): p is Promise<WalletBalance> => p !== null);
+
   return Promise.all([
     fetchBalance('router', process.env.ROUTER_ADDR),
     fetchBalance('research', process.env.AGENT1_ADDR),
     fetchBalance('writer', process.env.AGENT2_ADDR),
     fetchBalance('formatter', process.env.AGENT3_ADDR),
+    ...stakeWallets,
   ]);
 }

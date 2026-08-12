@@ -43,7 +43,7 @@ function findAgent(name: string, quotes: AgentQuote[], settlement: SettlementRes
   if (!quote || !settled || !registry) {
     throw new RedeemError(name, 'missing quote/settlement/registry entry — should never happen');
   }
-  return { url: registry.url, index: settled.index, txId: settled.txId };
+  return { url: registry.url, index: settled.index, txId: settled.txId, settled };
 }
 
 export async function redeemAll(
@@ -64,6 +64,23 @@ export async function redeemAll(
   for (const entry of AGENT_REGISTRY) {
     if (!selected.has(entry.name)) continue;
     const target = findAgent(entry.name, quotes, settlement);
+
+    // Slashed agents (stake+slash, see router/stake.ts) were never paid —
+    // their group slot is a stake->user rebate, not router->agent. Calling
+    // /redeem for one would correctly fail on-chain verification (wrong
+    // receiver), so skip it and report the outcome directly instead.
+    if (target.settled.outcome === 'slashed') {
+      outputs[entry.name] = {
+        agent: entry.name,
+        outcome: 'slashed',
+        reason: target.settled.reason,
+        rebateToUserMicroUsdc: target.settled.amountMicroUsdc,
+        txId: target.txId,
+      };
+      console.log(`  ⚔ ${entry.name} slashed (txId=${target.txId}) — ${target.settled.reason}`);
+      continue;
+    }
+
     outputs[entry.name] = await redeemOne(
       entry.name,
       target.url,

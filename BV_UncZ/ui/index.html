@@ -148,9 +148,25 @@
     <div id="error-area"></div>
   </div>
 
+  <div class="panel" id="quality-panel" style="display:none;">
+    <h2>Quality gate results <span class="subtitle" style="margin:0;">(per-agent, checked before any payment)</span></h2>
+    <table id="quality-table">
+      <thead><tr><th>Agent</th><th>Verdict</th><th>Reason</th><th>Staked</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
   <div class="panel" id="settlement-panel" style="display:none;">
     <h2>Settlement</h2>
     <div id="settlement-body"></div>
+  </div>
+
+  <div class="panel" id="receipt-panel" style="display:none;">
+    <h2>Receipt <span class="subtitle" style="margin:0;">(who got paid, who got slashed, and why)</span></h2>
+    <table id="receipt-table">
+      <thead><tr><th>Agent</th><th>Outcome</th><th>Amount</th><th>Reason</th></tr></thead>
+      <tbody></tbody>
+    </table>
   </div>
 
   <div class="panel" id="results-panel" style="display:none;">
@@ -180,6 +196,16 @@
       <span class="admin-status" id="quality-gate-status">auto</span>
     </div>
   </div>
+
+  <div class="panel">
+    <h2>Self-test: replay guard <span class="subtitle" style="margin:0;">(fires N concurrent redeem attempts with the same proof — proves exactly one gets through)</span></h2>
+    <div class="admin-row">
+      <select id="replay-agent" style="background:#0d0f13;border:1px solid var(--border);color:var(--text);padding:6px;border-radius:6px;"></select>
+      <input id="replay-n" type="number" value="5" min="2" max="20" style="width:60px;margin:0;padding:6px;" />
+      <button class="small" onclick="runSelfTestReplay()">Run replay test</button>
+    </div>
+    <div id="replay-result" style="margin-top:8px;font-size:13px;"></div>
+  </div>
 </div>
 
 <script>
@@ -200,8 +226,38 @@ function setPhase(id, status) {
 function resetPhases() {
   ['quality', 'quote', 'settle', 'redeem'].forEach((p) => setPhase(p, 'pending'));
   document.getElementById('error-area').innerHTML = '';
+  document.getElementById('quality-panel').style.display = 'none';
   document.getElementById('settlement-panel').style.display = 'none';
+  document.getElementById('receipt-panel').style.display = 'none';
   document.getElementById('results-panel').style.display = 'none';
+}
+
+function renderQualityVerdicts(verdicts) {
+  const panel = document.getElementById('quality-panel');
+  if (!verdicts || !verdicts.length) { panel.style.display = 'none'; return; }
+  panel.style.display = 'block';
+  document.querySelector('#quality-table tbody').innerHTML = verdicts.map(v => `
+    <tr>
+      <td>${escapeHtml(v.agent)}</td>
+      <td style="color:${v.ok ? 'var(--good)' : 'var(--bad)'};font-weight:600;">${v.ok ? 'PASS' : 'FAIL'}</td>
+      <td>${escapeHtml(v.reason)}</td>
+      <td>${v.staked ? 'yes' : 'no'}</td>
+    </tr>
+  `).join('');
+}
+
+function renderReceipt(receipt) {
+  const panel = document.getElementById('receipt-panel');
+  if (!receipt || !receipt.length) { panel.style.display = 'none'; return; }
+  panel.style.display = 'block';
+  document.querySelector('#receipt-table tbody').innerHTML = receipt.map(r => `
+    <tr>
+      <td>${escapeHtml(r.agent)}</td>
+      <td style="color:${r.outcome === 'paid' ? 'var(--good)' : 'var(--bad)'};font-weight:600;">${r.outcome.toUpperCase()}</td>
+      <td>$${r.amountUsd.toFixed(2)}${r.outcome === 'slashed' ? ' (rebate to user)' : ''}</td>
+      <td>${r.reason ? escapeHtml(r.reason) : '—'}</td>
+    </tr>
+  `).join('');
 }
 
 function renderError(message, zeroSpend) {
@@ -287,6 +343,7 @@ async function route() {
       body: JSON.stringify({ task, maxSpend }),
     });
     const data = await res.json();
+    renderQualityVerdicts(data.qualityVerdicts);
 
     if (data.phase === 'QUALITY') {
       setPhase('quality', 'failed');
@@ -308,6 +365,7 @@ async function route() {
       setPhase('settle', 'done');
       setPhase('redeem', 'done');
       renderSettlement(data.settlement);
+      renderReceipt(data.receipt);
       renderResults(data);
     } else {
       setPhase('quality', 'failed');
@@ -400,6 +458,31 @@ async function setQualityGate(mode) {
   document.getElementById('quality-gate-status').textContent = json.qualityGateMode || mode;
 }
 
+async function runSelfTestReplay() {
+  const agent = document.getElementById('replay-agent').value;
+  const n = parseInt(document.getElementById('replay-n').value, 10) || 5;
+  const out = document.getElementById('replay-result');
+  out.textContent = 'Running …';
+  try {
+    const res = await fetch('/self-test/replay', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ agent, n }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      out.innerHTML = '<span style="color: var(--bad);">' + escapeHtml(data.error || 'failed') + '</span>';
+      return;
+    }
+    out.innerHTML =
+      `<span style="color: var(--good); font-weight:600;">${data.passedGuard} passed the guard</span> / ` +
+      `<span style="color: var(--bad); font-weight:600;">${data.replayRejected} rejected as replay (409)</span> ` +
+      `out of ${data.attempts} concurrent identical requests to <b>${escapeHtml(data.agent)}</b>.`;
+  } catch (err) {
+    out.innerHTML = '<span style="color: var(--bad);">' + escapeHtml(String(err)) + '</span>';
+  }
+}
+
 async function loadAgents() {
   try {
     const res = await fetch('/agents');
@@ -409,6 +492,8 @@ async function loadAgents() {
     AGENTS = [];
   }
   renderAdminRows();
+  const sel = document.getElementById('replay-agent');
+  if (sel) sel.innerHTML = AGENTS.map(a => `<option value="${escapeHtml(a)}">${escapeHtml(a)}</option>`).join('');
 }
 
 loadAgents();
