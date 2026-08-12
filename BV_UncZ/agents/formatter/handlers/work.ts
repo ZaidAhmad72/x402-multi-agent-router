@@ -83,10 +83,19 @@ export async function handleFormatterWork(c: Context) {
   }
 }
 
+const CURRENCY_WORD_ALTERNATION = Object.keys(CURRENCY_NAMES).join('|');
+
 function parseAmountAndCurrency(text: string): { amount: number; from: string } {
   const lower = text.toLowerCase();
 
-  const amountMatch = lower.match(/(\d[\d,]*(?:\.\d+)?)/);
+  // Prefer a number adjacent to a currency word (e.g. "100 usd" or "usd
+  // 100") over the first number anywhere in the text — text upstream of
+  // formatter (e.g. a writer summary combining weather + currency) can
+  // contain unrelated numbers, like a temperature, earlier in the string.
+  const numberThenCurrency = lower.match(new RegExp(`(\\d[\\d,]*(?:\\.\\d+)?)\\s*(?:${CURRENCY_WORD_ALTERNATION})\\b`));
+  const currencyThenNumber = lower.match(new RegExp(`\\b(?:${CURRENCY_WORD_ALTERNATION})\\s*(\\d[\\d,]*(?:\\.\\d+)?)`));
+  const anyNumber = lower.match(/(\d[\d,]*(?:\.\d+)?)/);
+  const amountMatch = numberThenCurrency ?? currencyThenNumber ?? anyNumber;
   const amount = amountMatch ? Number(amountMatch[1].replace(/,/g, '')) : DEFAULT_AMOUNT;
 
   let from = DEFAULT_FROM;

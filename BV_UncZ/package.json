@@ -13,6 +13,8 @@
     "dev:research": "npm run dev --workspace=agent-research",
     "dev:writer": "npm run dev --workspace=agent-writer",
     "dev:formatter": "npm run dev --workspace=agent-formatter",
+    "dev:weather": "npm run dev --workspace=agent-weather",
+    "dev:analysis": "npm run dev --workspace=agent-analysis",
     "dev:router": "npm run dev --workspace=router",
     "test:agent": "npm run test:agent --workspace=client"
   }

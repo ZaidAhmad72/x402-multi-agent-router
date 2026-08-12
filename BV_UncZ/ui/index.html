@@ -129,6 +129,12 @@
 
   <div class="panel">
     <h2>Task</h2>
+    <label>Example</label>
+    <div class="admin-row" style="margin-bottom: 12px;">
+      <button class="small" onclick="loadExample('general')">General (research + writer)</button>
+      <button class="small" onclick="loadExample('currency')">Currency (+ formatter)</button>
+      <button class="small" onclick="loadExample('weather')">Weather + currency (+ weather, analysis)</button>
+    </div>
     <label for="task">Task</label>
     <input id="task" type="text" value="Summarize algorand x402 atomic groups for a hackathon judge" />
     <label for="maxSpend">Max spend (USD)</label>
@@ -325,6 +331,17 @@ function renderAgentOutput(name, output) {
 
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+const TASK_EXAMPLES = {
+  general: 'Summarize algorand x402 atomic groups for a hackathon judge',
+  currency: 'Convert 250 USD to EUR and explain the current exchange rate trend',
+  weather: 'Whats the weather in Berlin and convert 100 USD to EUR',
+};
+
+function loadExample(key) {
+  const task = TASK_EXAMPLES[key];
+  if (task) document.getElementById('task').value = task;
 }
 
 async function route() {

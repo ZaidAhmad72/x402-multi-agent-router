@@ -65,7 +65,12 @@ export function getForcedFailAgent(): string | null {
   return forcedFailAgent;
 }
 
-async function judgeOne(agentName: string, task: string, output: unknown): Promise<{ ok: boolean; reason: string }> {
+async function judgeOne(
+  agentName: string,
+  agentDescription: string,
+  task: string,
+  output: unknown
+): Promise<{ ok: boolean; reason: string }> {
   const apiKey = process.env.GROQ_API_KEY;
   if (!apiKey) return { ok: true, reason: 'GROQ_API_KEY not set — judge skipped (fail-open)' };
 
@@ -79,12 +84,15 @@ async function judgeOne(agentName: string, task: string, output: unknown): Promi
           {
             role: 'system',
             content:
-              `You are a strict quality gate for an AI agent named "${agentName}". Given the user's ` +
-              'task and that agent\'s produced output, decide whether the output is genuinely relevant, ' +
-              'substantive, and non-empty for the task — not whether it is perfect. Respond with ONLY ' +
-              'JSON: {"ok": boolean, "reason": string (max 15 words)}.',
+              `You are a strict quality gate for one agent, "${agentName}", in a multi-agent system. ` +
+              `This agent's ONLY job is: ${agentDescription} Other agents handle any other part of the ` +
+              "user's task — do NOT penalize this agent for not covering parts of the task outside its " +
+              "own job description above. Given the agent's own output, decide whether it is genuinely " +
+              'relevant, substantive, and non-empty *for that job specifically* — not whether it is ' +
+              'perfect, and not whether it alone answers the whole task. Respond with ONLY JSON: ' +
+              '{"ok": boolean, "reason": string (max 15 words)}.',
           },
-          { role: 'user', content: `Task: ${task}\n\nAgent output:\n${JSON.stringify(output).slice(0, 2000)}` },
+          { role: 'user', content: `Full user task (context only): ${task}\n\nThis agent's output:\n${JSON.stringify(output).slice(0, 2000)}` },
         ],
         temperature: 0,
         response_format: { type: 'json_object' },
@@ -149,7 +157,7 @@ export async function runQualityGate(task: string, registry: AgentRegistryEntry[
     }
     outputs[entry.name] = output;
 
-    const verdict = await judgeOne(entry.name, task, output);
+    const verdict = await judgeOne(entry.name, entry.description, task, output);
     verdicts.push({ agent: entry.name, ok: verdict.ok, reason: verdict.reason, staked });
     console.log(`  ${verdict.ok ? '✓' : '✗'} ${entry.name}: ${verdict.reason}${staked ? ' [staked]' : ''}`);
   }

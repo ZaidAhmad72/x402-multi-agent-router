@@ -50,6 +50,8 @@ export async function getAllBalances(): Promise<WalletBalance[]> {
     fetchBalance('research', process.env.AGENT1_ADDR),
     fetchBalance('writer', process.env.AGENT2_ADDR),
     fetchBalance('formatter', process.env.AGENT3_ADDR),
+    fetchBalance('weather', process.env.AGENT4_ADDR),
+    fetchBalance('analysis', process.env.AGENT5_ADDR),
     ...stakeWallets,
   ]);
 }

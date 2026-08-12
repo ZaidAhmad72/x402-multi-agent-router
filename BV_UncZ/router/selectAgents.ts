@@ -29,6 +29,9 @@ Respond with ONLY a JSON object, no other text: {"agents": string[]} — a subse
 Rules:
 - If an agent is included, its dependencies must be included too (the task description says what each agent needs).
 - Only include an agent if the task genuinely needs it.
+- If a more specific agent already fully covers part of the task (e.g. a dedicated weather or currency
+  agent), do NOT also include a general-purpose research/writer pair for that same part — pick the
+  specific one, not both. Only include research/writer for parts of the task no specific agent covers.
 - If nothing clearly fits, return an empty array — the caller will fall back to a safe default.`;
 }
 

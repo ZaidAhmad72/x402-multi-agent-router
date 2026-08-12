@@ -41,7 +41,7 @@ export const AGENT_REGISTRY: AgentRegistryEntry[] = [
     name: 'research',
     url: 'http://localhost:4001',
     description:
-      'gathers sourced factual findings about a topic. Needed for any informational, explanatory, or "tell me about X" task.',
+      'gathers sourced factual findings about a general topic. Needed for informational/explanatory tasks.',
     buildInput: (task) => ({ task }),
   },
   {
@@ -59,5 +59,23 @@ export const AGENT_REGISTRY: AgentRegistryEntry[] = [
       'deterministic, non-LLM live currency conversion and chart rendering. ONLY needed when the task explicitly involves converting or comparing a monetary amount between currencies.',
     dependsOn: ['writer'],
     buildInput: (task, outputs) => ({ text: outputs.writer?.summary?.body ?? task }),
+  },
+  {
+    name: 'weather',
+    url: 'http://localhost:4004',
+    description:
+      'deterministic, non-LLM live lookup of current weather (temperature, wind, conditions) for a city. Needed when the task asks about weather, temperature, or forecast in a location.',
+    buildInput: (task) => ({ task }),
+  },
+  {
+    name: 'analysis',
+    url: 'http://localhost:4005',
+    description:
+      'synthesizes weather and/or currency-conversion results into a short plain-language narrative. Only useful together with "weather" and/or "formatter" — always include it alongside either of those, to explain the numbers in plain language; it produces nothing useful on its own.',
+    buildInput: (task, outputs) => ({
+      task,
+      weather: outputs.weather,
+      currency: outputs.formatter,
+    }),
   },
 ];

@@ -156,6 +156,22 @@ app.post('/route', async (c) => {
         502
       );
     }
+    if (message.includes('must optin')) {
+      const addrMatch = message.match(/missing from (\S+)/);
+      return c.json(
+        {
+          error:
+            'Settlement failed: an agent wallet' +
+            (addrMatch ? ` (${addrMatch[1]})` : '') +
+            ' is not opted into the USDC ASA (10458941) yet — it cannot receive a payment until it opts in. ' +
+            'Nothing was spent.',
+          phase: 'QUOTE',
+          zeroSpend: true,
+          qualityVerdicts,
+        },
+        502
+      );
+    }
     if (isNetworkConnectivityError(error)) {
       return c.json({ error: NETWORK_ERROR_MESSAGE, phase: 'QUOTE', zeroSpend: true, qualityVerdicts }, 502);
     }
