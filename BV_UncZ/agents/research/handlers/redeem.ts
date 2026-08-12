@@ -49,7 +49,7 @@ export async function handleResearchRedeem(c: Context) {
   const task = typeof body?.task === 'string' && body.task.trim() ? body.task.trim() : 'unspecified task';
 
   return c.json({
-    ...runResearch(task),
+    ...(await runResearch(task)),
     verifiedTxId: verification.txId,
   });
 }

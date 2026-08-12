@@ -50,7 +50,7 @@ export async function handleWriterRedeem(c: Context) {
   const findings: Finding[] = Array.isArray(body?.findings) ? body.findings : [];
 
   return c.json({
-    ...runWriter(task, findings),
+    ...(await runWriter(task, findings)),
     verifiedTxId: verification.txId,
   });
 }

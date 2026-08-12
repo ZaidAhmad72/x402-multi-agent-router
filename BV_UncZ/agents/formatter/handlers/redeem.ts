@@ -49,7 +49,7 @@ export async function handleFormatterRedeem(c: Context) {
   const text: string = typeof body?.text === 'string' ? body.text : '';
 
   return c.json({
-    ...runFormatter(text),
+    ...(await runFormatter(text)),
     verifiedTxId: verification.txId,
   });
 }
