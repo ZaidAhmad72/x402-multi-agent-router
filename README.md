@@ -44,28 +44,37 @@ table below).
   question only pays research + writer ($0.05 total), but a currency question also pulls in the
   formatter ($0.06 total). Decided automatically using Groq (an AI model), with a safe fallback
   to "just use all three" if that call ever fails.
+- **Any teammate can add a new agent without touching the core router code** — one entry in a
+  registry file (name, port, description, what it needs from other agents) and the quoting,
+  paying, redeeming, and dashboard all pick it up automatically.
+- **Quality gate — the "wow" feature.** Before any agent is even asked for a price, the router
+  quietly runs each one for free and has an AI judge check the output is actually good. A bad
+  answer aborts the whole thing with zero money spent, before payment is even discussed. There's
+  also a manual override for reliable live demos (`force pass` / `force fail` buttons).
 - **GitHub repo set up**, both projects pushed, documented, and kept in sync.
 
 ## 2. What's left
 
-- **Get real test-money into the router's wallet.** This is the single blocker holding back a
-  fully completed live demo. Everything above has been proven correct right up to the very last
-  step — the group can't actually move money because the router's wallet has zero test-USDC in
-  it. (This is fake/test money with zero real value — see the note at the bottom — but we still
-  need *some* of it to prove the payment actually lands on-chain.)
-- **One extra "wow" feature**, not yet started — pick one of: a self-test button a judge can
-  press to prove the safety checks work, a stricter spending-limit feature, or a quality check
-  that runs before any agent gets paid.
+- **Wire up real payment from the user's own wallet.** Right now the router pays every agent out
+  of its own pre-loaded wallet — clicking "Route" doesn't ask you to sign or approve anything.
+  The actual "user pays" flow (get asked for payment, sign it, retry) is proven to work as a
+  separate standalone test (`BV_UncZ/client/`), it just isn't hooked up to the "Route" button
+  yet. This is explicitly the next thing to build.
+- **Get real test-money into the router's wallet.** The single blocker holding back a fully
+  completed live demo of the *existing* atomic-payment flow. Everything has been proven correct
+  right up to the very last step — the group can't actually move money because the router's
+  wallet has zero test-USDC in it. (This is fake/test money with zero real value — see the note
+  at the bottom — but we still need *some* of it to prove the payment actually lands on-chain.)
 - **Demo rehearsal and slides** — not started yet.
 - **A clean "clone the repo and run it" test** — making sure someone starting from scratch can
   get it running without hitting the setup snags we already worked through.
 
 ## 3. What's being worked on right now
 
-Nothing is actively mid-task. The most recent completed step was making the router pick agents
-per task automatically (item 4 in the "done" list above) and fixing the missing preview button on
-the dashboard. Next up is a team decision: which one extra feature to add, and getting the
-router's wallet funded with test-USDC so we can show a fully completed, real, on-chain payment.
+Nothing is actively mid-task. The most recent completed steps were the quality gate, making the
+agent list pluggable, and picking agents per task automatically. Next up: wiring real user-facing
+payment onto the "Route" button, and getting the router's wallet funded with test-USDC so a fully
+completed, real, on-chain payment can actually be shown.
 
 ## 4. What was ported from Zaid's `reference-implementation/`
 
@@ -81,6 +90,29 @@ router's wallet funded with test-USDC so we can show a fully completed, real, on
 **Not ported, on purpose:** the package versions and the single-payment-endpoint design.
 `BV_UncZ`'s entire point is paying multiple agents *at once* — a single bundled endpoint doesn't
 demonstrate that, so that design wasn't brought over.
+
+---
+
+## 5. How payment works right now, in plain terms
+
+Click "Route" today and **you won't be asked to sign or approve anything.** The router pays all
+the agents itself, out of its own pre-loaded test wallet — like a company card, not your own
+wallet. That's intentional for this stage: the hard, novel part (paying several agents in one
+unbreakable transaction) is what's built and proven. The normal, well-understood part (a real
+person's wallet paying for something over x402) is proven separately as a standalone test, just
+not connected to the dashboard yet — that's the "what's left" item above. Full explanation with
+the technical reasoning: [`explainer.md` §4](explainer.md#4-how-payment-actually-works-from-a-users-perspective--read-this-carefully).
+
+## 6. How to test the tricky cases yourself
+
+No test-money needed for any of these — they all fail (correctly, on purpose) at a step before
+money would move:
+
+- **A bad/low-quality answer → no payment**: `curl -X POST http://localhost:4000/admin/quality-gate/fail`, then try routing anything. Reset with `.../auto`.
+- **One agent goes down mid-task**: `curl -X POST http://localhost:4000/admin/kill/writer`, then try routing anything. Reset with `.../admin/revive/writer`.
+- **Spending limit too low**: route a currency task with a tiny `maxSpend` (e.g. `0.01`) — it refuses before signing anything.
+
+Full commands and expected output for each: [`explainer.md` §10](explainer.md#10-how-to-test-the-different-scenarios-no-funds-needed-for-any-of-these).
 
 ---
 
