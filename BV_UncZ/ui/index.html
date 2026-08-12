@@ -225,20 +225,27 @@ function renderResults(data) {
 
   if (data.result) {
     const r = data.result;
-    html += `
+    if (r.research) {
+      html += `
       <div class="agent-block">
         <h3>research — ${r.research.findings.length} findings <span class="tx-id">txId ${short(r.research.verifiedTxId)}</span></h3>
         <pre>${escapeHtml(r.research.findings.map(f => '- ' + f.point).join('\\n'))}</pre>
-      </div>
+      </div>`;
+    }
+    if (r.writer) {
+      html += `
       <div class="agent-block">
         <h3>writer — summary <span class="tx-id">txId ${short(r.writer.verifiedTxId)}</span></h3>
         <pre>${escapeHtml(r.writer.summary.body)}</pre>
-      </div>
+      </div>`;
+    }
+    if (r.formatter) {
+      html += `
       <div class="agent-block">
         <h3>formatter — deterministic chart, no LLM <span class="tx-id">txId ${short(r.formatter.verifiedTxId)}</span></h3>
         ${r.formatter.svg}
-      </div>
-    `;
+      </div>`;
+    }
   }
 
   document.getElementById('results-body').innerHTML = html;

@@ -138,6 +138,8 @@ Everything below is **done, verified live, committed, and pushed**:
 | P2 | Real formatter agent (live currency conversion, SVG) | `reference-implementation/server/src/agents/currencyAgent.ts` | Tested directly: correct live FX rates, correct SVG. Replaced a formatter that rendered a meaningless bar chart of *per-line character counts* — real value now. |
 | P4 | No-payment preview mode (`/debug/preview`, on each agent + router) | `reference-implementation`'s "Preview (no payment)" button | Tested live end-to-end through the router: real 3-agent pipeline, zero payment |
 | — | Routing fee (5th leg in the settlement group) | (new, not from either repo — the analysis doc's recommendation) | Verified live in logs: `3 payout(s) + 1 routing fee + 1 fee-payer txn` |
+| P3 | Groq-based dynamic agent selection (`router/selectAgents.ts`) | `reference-implementation`'s `llmExtractor.ts` pattern | Verified live: "Explain how Algorand consensus works" → QUOTE selects `[research, writer]` only, total $0.05, group size 4. "Convert 250 USD to EUR..." → selects all three, total $0.06, group size 5. Falls back to all three on any Groq failure. |
+| — | "Preview (no payment)" button actually wired into the dashboard UI | (bug found in `BV_UncZ` itself) | The `/debug/preview` route existed but nothing in `ui/index.html` called it — the button in this table's earlier version was never real. Now wired up and tested live in-browser. |
 
 **`MOCK=true` is still fully wired** on research/writer as a working fallback — flip one env
 var if Groq or wifi is unreliable during the actual demo. Never mocks payment, only content.
@@ -155,10 +157,6 @@ var if Groq or wifi is unreliable during the actual demo. Never mocks payment, o
 ## 6. What's still left
 
 **From the analysis doc's plan, not yet done:**
-- **P3** — port `reference-implementation`'s Groq-based dynamic agent selection
-  (`llmExtractor.ts`) so the router decides *which* agents a task actually needs instead of
-  always quoting all three. Makes `N` (and the group size) vary per request instead of
-  being fixed at 3.
 - **One novelty feature** (pick at most one, per the doc): a judge-triggerable replay
   self-test endpoint, a spend-mandate on top of the per-request budget cap, or a
   pre-settlement quality gate (validate agents before paying them, not just that they're
@@ -185,13 +183,16 @@ cd BV_UncZ
 npm install
 cd pera_wallet_setup/scripts && npm install && cd ../..
 # .env.wallets at BV_UncZ root needs USER/ROUTER/ROUTER_FEE/AGENT1/AGENT2/AGENT3 _ADDR + _MNEMONIC
+# + GROQ_API_KEY (router/selectAgents.ts and the research/writer agents all use it;
+#   router falls back to quoting all 3 agents if it's missing, so this is optional but recommended)
 npm run dev:research    # port 4001
 npm run dev:writer      # port 4002
 npm run dev:formatter   # port 4003
 npm run dev:router      # port 4000 — dashboard at http://localhost:4000
 ```
 
-Try it without any payment at all (real agent logic, zero funds needed):
+Try it without any payment at all (real agent logic, zero funds needed) — either click
+**"Preview (no payment)"** on the dashboard at `http://localhost:4000`, or:
 ```bash
 curl -X POST http://localhost:4000/debug/preview -H "Content-Type: application/json" \
   -d '{"task":"why atomic transaction groups matter"}'

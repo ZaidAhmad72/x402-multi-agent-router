@@ -48,27 +48,39 @@ export async function redeemAll(
   task: string,
   quotes: AgentQuote[],
   settlement: SettlementResult
-): Promise<{ research: any; writer: any; formatter: any }> {
-  console.log("\nREDEEM — calling each agent with its group ID + index as proof...");
+): Promise<{ research?: any; writer?: any; formatter?: any }> {
+  console.log('\nREDEEM — calling each selected agent with its group ID + index as proof...');
 
-  const research = findAgent('research', quotes, settlement);
-  const researchOut = await redeemOne('research', research.url, settlement.groupId, research.index, { task });
-  console.log(`  ✓ research redeemed (txId=${research.txId})`);
+  const selected = new Set(quotes.map((q) => q.agent));
+  const out: { research?: any; writer?: any; formatter?: any } = {};
 
-  const writer = findAgent('writer', quotes, settlement);
-  const writerOut = await redeemOne('writer', writer.url, settlement.groupId, writer.index, {
-    task,
-    findings: researchOut.findings,
-  });
-  console.log(`  ✓ writer redeemed (txId=${writer.txId})`);
+  // Dynamic agent selection (selectAgents.ts) means the group may not contain
+  // all three agents — only redeem, and only wire up dependencies for, the
+  // ones that were actually quoted and settled.
+  if (selected.has('research')) {
+    const research = findAgent('research', quotes, settlement);
+    out.research = await redeemOne('research', research.url, settlement.groupId, research.index, { task });
+    console.log(`  ✓ research redeemed (txId=${research.txId})`);
+  }
 
-  const formatter = findAgent('formatter', quotes, settlement);
-  const formatterOut = await redeemOne('formatter', formatter.url, settlement.groupId, formatter.index, {
-    text: writerOut.summary?.body ?? '',
-  });
-  console.log(`  ✓ formatter redeemed (txId=${formatter.txId})`);
+  if (selected.has('writer')) {
+    const writer = findAgent('writer', quotes, settlement);
+    out.writer = await redeemOne('writer', writer.url, settlement.groupId, writer.index, {
+      task,
+      findings: out.research?.findings ?? [],
+    });
+    console.log(`  ✓ writer redeemed (txId=${writer.txId})`);
+  }
+
+  if (selected.has('formatter')) {
+    const formatter = findAgent('formatter', quotes, settlement);
+    out.formatter = await redeemOne('formatter', formatter.url, settlement.groupId, formatter.index, {
+      text: out.writer?.summary?.body ?? task,
+    });
+    console.log(`  ✓ formatter redeemed (txId=${formatter.txId})`);
+  }
 
   console.log('REDEEM complete\n');
 
-  return { research: researchOut, writer: writerOut, formatter: formatterOut };
+  return out;
 }

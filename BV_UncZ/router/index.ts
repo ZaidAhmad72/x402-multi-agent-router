@@ -15,6 +15,7 @@ import { settleGroup, BudgetExceededError, GroupTooLargeError } from './settle';
 import { redeemAll, RedeemError } from './redeem';
 import { getAllBalances } from './balances';
 import { debugPreviewAll } from './debugPreview';
+import { selectAgents } from './selectAgents';
 import { AGENT_REGISTRY } from '../shared/constants';
 
 config();
@@ -66,7 +67,8 @@ app.post('/route', async (c) => {
 
   let quotePhase;
   try {
-    quotePhase = await quoteAgents();
+    const registry = await selectAgents(task);
+    quotePhase = await quoteAgents(registry);
   } catch (error) {
     if (error instanceof LivenessError) {
       console.error(`✗ ${error.message}`);
