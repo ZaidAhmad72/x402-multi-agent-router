@@ -13,6 +13,8 @@ import {
   INDEXER_TESTNET,
   explorerGroupUrl,
   USDC_TESTNET_ASA_ID,
+  ROUTING_FEE_MICRO_USDC,
+  ROUTING_FEE_USD,
 } from '../shared/constants';
 import type { QuotePhaseResult } from '../shared/types';
 
@@ -47,6 +49,7 @@ export interface SettlementResult {
   explorerUrl: string;
   confirmedRound: number;
   perAgent: AgentSettlement[];
+  routingFee: { payTo: string; amountMicroUsdc: string; txId: string; index: number };
 }
 
 let cachedAlgorand: AlgorandClient | null = null;
@@ -63,21 +66,28 @@ export async function settleGroup(
   quotePhase: QuotePhaseResult,
   maxSpend: number
 ): Promise<SettlementResult> {
-  // Gate 1: budget — before any signing or network call.
-  if (quotePhase.totalUsd > maxSpend) {
-    throw new BudgetExceededError(quotePhase.totalUsd, maxSpend);
+  // Gate 1: budget — before any signing or network call. Includes the
+  // routing fee, not just agent pass-through costs, so maxSpend is an
+  // honest cap on everything the group actually moves.
+  const totalUsdWithFee = quotePhase.totalUsd + ROUTING_FEE_USD;
+  if (totalUsdWithFee > maxSpend) {
+    throw new BudgetExceededError(totalUsdWithFee, maxSpend);
   }
 
   // Gate 2: group size — before any signing or network call.
-  const groupSize = quotePhase.quotes.length + 1; // + pooled fee-payer txn
+  const groupSize = quotePhase.quotes.length + 1 + 1; // + routing fee + pooled fee-payer txn
   if (groupSize > 16) {
     throw new GroupTooLargeError(groupSize);
   }
 
   const routerAddr = process.env.ROUTER_ADDR;
   const routerMnemonic = process.env.ROUTER_MNEMONIC;
+  const routerFeeAddr = process.env.ROUTER_FEE_ADDR;
   if (!routerAddr || !routerMnemonic) {
     throw new Error('Missing ROUTER_ADDR / ROUTER_MNEMONIC — cannot sign the settlement group');
+  }
+  if (!routerFeeAddr) {
+    throw new Error('Missing ROUTER_FEE_ADDR — cannot route the fee leg');
   }
 
   const algorand = getAlgorandClient();
@@ -85,10 +95,10 @@ export async function settleGroup(
   algorand.setSignerFromAccount(routerAccount);
 
   const n = quotePhase.quotes.length;
-  const pooledFeeMicroAlgo = 1000 * (n + 1);
+  const pooledFeeMicroAlgo = 1000 * (n + 2); // + routing fee leg + the fee-payer txn itself
 
   console.log(
-    `\nSETTLE — building one atomic group: ${n} payout(s) + 1 fee-payer txn (pooled fee ${pooledFeeMicroAlgo} microAlgo)`
+    `\nSETTLE — building one atomic group: ${n} payout(s) + 1 routing fee + 1 fee-payer txn (pooled fee ${pooledFeeMicroAlgo} microAlgo)`
   );
 
   let composer = algorand.newGroup();
@@ -101,6 +111,15 @@ export async function settleGroup(
       staticFee: microAlgo(0),
     });
   }
+  const routingFeeIndex = n;
+  composer = composer.addAssetTransfer({
+    sender: routerAddr,
+    receiver: routerFeeAddr,
+    assetId: BigInt(USDC_TESTNET_ASA_ID),
+    amount: ROUTING_FEE_MICRO_USDC,
+    staticFee: microAlgo(0),
+    note: 'x402 router routing fee',
+  });
   composer = composer.addPayment({
     sender: routerAddr,
     receiver: routerAddr,
@@ -123,8 +142,15 @@ export async function settleGroup(
     index: i,
   }));
 
+  const routingFee = {
+    payTo: routerFeeAddr,
+    amountMicroUsdc: ROUTING_FEE_MICRO_USDC.toString(),
+    txId: result.txIds[routingFeeIndex],
+    index: routingFeeIndex,
+  };
+
   console.log(`SETTLE complete — groupId=${groupId} confirmedRound=${confirmedRound}`);
   console.log(`  explorer: ${explorerUrl}\n`);
 
-  return { groupId, explorerUrl, confirmedRound, perAgent };
+  return { groupId, explorerUrl, confirmedRound, perAgent, routingFee };
 }

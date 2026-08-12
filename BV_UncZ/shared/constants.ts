@@ -6,6 +6,12 @@ export const FACILITATOR_URL = 'https://facilitator.goplausible.xyz';
 export const ALGOD_TESTNET = 'https://testnet-api.algonode.cloud';
 export const INDEXER_TESTNET = 'https://testnet-idx.algonode.cloud';
 
+// Flat per-job routing fee, charged on top of pass-through agent costs.
+// Included as its own leg in the same atomic settlement group — the business
+// model is a behaviour in the group, not a claim on a slide.
+export const ROUTING_FEE_MICRO_USDC = 10_000n; // $0.01
+export const ROUTING_FEE_USD = 0.01;
+
 // CLAUDE.md's constant (`.../testnet/group/<id>`) 404s — Lora's real route
 // includes the confirming block/round. Verified by clicking through Lora's
 // own transaction -> group link rather than guessing (see docs/PROBLEMS.md).
