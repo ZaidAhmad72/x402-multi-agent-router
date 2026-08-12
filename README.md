@@ -1,146 +1,100 @@
-# Atomic Multi-Agent Service Router
+# x402 on Algorand — Multi-Agent Service Router
 
-A single orchestration endpoint that accepts one user task, fans it out to three independent
-paid AI agents, and **pays all three in one Algorand atomic transaction group** — so either
-every agent is paid and the user gets a complete result, or nobody is paid and nothing is
-spent.
-
-**N quotes, one group, one atomic commitment.**
-
-The problem this fixes: today an orchestrator calls three paid services sequentially. The
-researcher gets paid, the writer gets paid, the designer times out. The user has spent money
-and has no deliverable. No rollback, no refund path. Three sequential x402 payments would
-also produce three independent group IDs — that's not atomic, it's just three payments that
-happened near each other. This project separates the 402 challenge phase from the settlement
-phase so N challenges collapse into one group.
-
-Built on Algorand TestNet, `@x402/*` (GoPlausible's x402-on-AVM implementation), and
-`@algorandfoundation/algokit-utils`.
+This repo holds **two separate implementations** of the same hackathon idea — pay-per-use AI
+services gated by the [x402 protocol](https://x402.org) on Algorand Testnet. They were built
+independently, by two people, and haven't been merged. This README explains what each one is
+and how to run it. Each has its own detailed docs linked below.
 
 ---
 
-## Architecture
+## `server/` + `client/` — single-endpoint router (this team member's build)
 
-```
-USER              ROUTER                 AGENTS              ALGORAND
- │                  │                       │                    │
- │─ task+budget ───>│                       │                    │
- │                  │── POST /work (x3) ───>│  no payment header │
- │                  │<── 402 + reqs ────────│  (parallel)        │
- │                  │  budget gate + group size gate             │
- │                  │  build ONE group: 3 payouts + 1 fee-payer  │
- │                  │  sign once, submit once ──────────────────>│
- │                  │<────── one group ID ───────────────────────│
- │                  │── X-PAYMENT-GROUP + INDEX ──>│              │
- │                  │                       │─ verify on-chain ─>│
- │                  │                       │  (agent doesn't trust router)
- │                  │<── 200 + result ──────│                    │
- │<─ result + ONE ──│                       │                    │
- │   group ID       │                       │                    │
-```
+A Hono server with **one payment-protected endpoint**, `GET /router/task`, that fans a single
+`$0.01` payment out to three real, live services and returns a combined answer:
 
-Two legs:
+- **Weather** (Open-Meteo, no API key)
+- **Currency conversion** (ExchangeRate-API, no API key)
+- **AI analysis** (Groq/Llama 3.3, synthesizes the other two)
 
-- **Outbound leg (the novelty)** — router quotes all three agents live with no payment
-  header, gates on budget and group size *before signing anything*, then builds and submits
-  one atomic group: `[0] USDC → research`, `[1] USDC → writer`, `[2] USDC → formatter`,
-  `[3] pooled fee-payer`. One group ID, one confirmation.
-- **Redeem** — router calls each agent again with `X-PAYMENT-GROUP` / `X-PAYMENT-INDEX`. Each
-  agent independently looks up the group via the public indexer and confirms the transaction
-  at its index pays *its own* wallet at least its quoted amount — **the agent verifies
-  on-chain; it does not trust the router.** A replay guard (checked before any work, never
-  after) stops the same proof from being redeemed twice.
+Which services run, and their parameters (location, amounts, currencies), are decided by a
+single Groq call per request — not hand-rolled regex — with an automatic fallback to
+keyword/regex matching if Groq is ever unavailable, so the endpoint keeps working through a
+Groq outage.
 
-Fee abstraction: agent wallets never sign a fee-bearing transaction in this flow — the
-router's own wallet fronts one pooled fee for the whole settlement group. The UI's balance
-table shows this live: agent ALGO balances stay flat across settlements while their USDC
-balances rise.
+Includes a minimal dashboard (`server/public/index.html`, served at `http://localhost:3000`)
+showing the router's decision, live payment status, the on-chain transaction proof, and live
+wallet balances — plus a **debug-only "Preview" mode** that runs the same agent logic without
+the payment gate, useful for testing while a wallet is unfunded.
 
----
+### Status
 
-## What's real vs. mocked
+Fully built and tested down to the one thing outside this code's control: **real testnet
+USDC**. Every piece — the 402 challenge, payment verification, agent orchestration, per-agent
+failure isolation, the dashboard, a from-scratch `npm install` — has been verified live. What
+hasn't been verified live yet is an actual **paid `200` response with a real, explorer-checked
+transaction ID**, because neither demo wallet has received testnet USDC despite repeated
+faucet attempts (see [`docs/PROBLEMS.md`](docs/PROBLEMS.md) for the full story). The code path
+for that is built and has been proven correct right up to "insufficient balance" — it just
+needs funds to complete.
 
-| Piece | Status |
-|---|---|
-| x402 payment challenge/verify/settle (inbound, per-agent quoting) | **Real** — actual 402s, actual `PaymentRequirements`, actual facilitator |
-| Atomic group settlement | **Real** — actual signed, submitted, confirmed Algorand TestNet transactions |
-| Agent-side on-chain verification | **Real** — actual indexer lookups, no trust in router-supplied data |
-| research / writer content | **Mocked** — canned findings/summary text (`MOCK=true`); no LLM key wired up. The payment path around them is never mocked. |
-| formatter | **Real, deterministic, and intentionally has no LLM path at all** — hard requirement, not a fallback |
-
----
-
-## Setup
-
-Prerequisites: Node 18+, npm. Wallets are already generated and funded on TestNet
-(`.env.wallets` at repo root — gitignored; see `pera_wallet_setup/scripts/` if you need to
-regenerate or opt in fresh ones).
+### Setup
 
 ```bash
-npm install          # installs all workspaces: shared, agents/*, router
+cd server
+npm install
+cp .env.example .env   # fill in PAYTO_ADDRESS, GROQ_API_KEY, DEMO_PAYER_MNEMONIC
+npm run dev
 ```
 
-**Important:** the `@x402/*` and `@algorandfoundation/algokit-utils` versions in every
-package.json are pinned to exact versions, not ranges. See `docs/PROBLEMS.md` for why —
-newer published versions of `@x402/avm` ship a broken `ALGORAND_TESTNET_CAIP2` constant that
-the live facilitator rejects. Do not loosen these pins without re-verifying against the
-facilitator's `/supported` endpoint.
-
-Run five processes (four services + this is what the UI drives):
+Open `http://localhost:3000` for the dashboard, or:
 
 ```bash
-cd agents/research && npx tsx index.ts     # port 4001
-cd agents/writer    && npx tsx index.ts    # port 4002
-cd agents/formatter && npx tsx index.ts    # port 4003
-cd router           && npx tsx index.ts    # port 4000
+curl "http://localhost:3000/router/task?task=weather+in+berlin"     # expect 402
+curl "http://localhost:3000/debug/preview?task=weather+in+berlin"   # real answer, no payment
 ```
 
-Open **http://localhost:4000** — the router serves the UI itself. Enter a task and a max
-spend, click Route, watch QUOTE → SETTLE → REDEEM light up, and click the group ID to open
-it on the TestNet explorer.
+Optional command-line payment test client:
 
-To test the failure path live: use the "Demo kill switch" panel (or
-`curl -X POST localhost:4000/admin/kill/writer`), then click Route again — it aborts with
-zero spend, provably, before any signing happens.
+```bash
+cd client
+npm install
+cp .env.example .env   # fill in CLIENT_WALLET_MNEMONIC (needs testnet ALGO + USDC)
+npm run test:router-task
+```
 
----
-
-## A real settled group ID
-
-This isn't a made-up example — it's a group produced during Phase 4 verification, checked
-independently against the public indexer (not just trusted from the router's own response):
-
-- **Group ID:** `CrUKSfQmsGdOuYDnZRb1K18kaJn2rfIzyEdziCAaOhE=`
-- **Explorer:** https://lora.algokit.io/testnet/block/66180927/group/CrUKSfQmsGdOuYDnZRb1K18kaJn2rfIzyEdziCAaOhE%3D
-- **Confirmed round:** 66180927
-- Verified via `testnet-idx.algonode.cloud/v2/transactions?group-id=...`: 4 transactions,
-  all `confirmed-round: 66180927` — 3 `axfer` (research/writer/formatter payouts) at
-  `intra-round-offset` 0/1/2, plus 1 `pay` (pooled fee-payer) at offset 3.
+See [`docs/PROBLEMS.md`](docs/PROBLEMS.md) for every real bug hit while building this
+(package/facilitator mismatches, faucet failures, intent-extraction bugs), with root cause and
+fix for each.
 
 ---
 
-## Known limitation
+## `BV_UncZ-master/` — atomic multi-agent router (teammate's build)
 
-**Atomic payment is not atomic execution.** Paying three agents in one unbreakable group
-does not guarantee any of them returned good output. The mitigation implemented here is the
-quote-phase liveness check — a dead agent never enters the group, so the most common failure
-(an agent being down) is caught before money moves. If an agent goes down *between*
-settlement and redeem (a narrower window), the router surfaces this honestly — `phase:
-"SETTLED"`, `settledButNotRedeemed: true`, the real group ID still included — rather than
-pretending the redeem succeeded. The full fix is escrow-based conditional release, which is
-next-milestone work, not implemented here.
+A more ambitious design: three independently-paid agent services (research/writer/formatter),
+fanned in through **one Algorand atomic transaction group** — either all three agents get paid
+in a single unbreakable group, or none do. Includes agent-side on-chain payment verification
+(agents don't trust the router), a replay guard, and a live demo kill-switch.
 
-## Explicitly out of scope
+Full architecture, setup, and its own problems log live in
+[`BV_UncZ-master/README.md`](BV_UncZ-master/README.md) and
+[`BV_UncZ-master/docs/PROBLEMS.md`](BV_UncZ-master/docs/PROBLEMS.md).
 
-Quality escrow, more than ~13 agents (16-transaction group limit), dynamic agent discovery
-(the registry is hardcoded by design), streaming/async job payment, mainnet, multi-user/auth,
-retry or partial fulfilment (all-or-nothing is the product), and reputation/ranking. See
-`CLAUDE.md` §8 for the full list and reasoning.
+### Status
 
-## Problems encountered
+All phases built per its own `CLAUDE.md`. Verified live: all three agents challenge with
+`402` at distinct prices, the router's quote phase aggregates them correctly, and it builds,
+signs, and submits a real 4-transaction atomic group — settlement itself is blocked on the
+same testnet-USDC shortage described above.
 
-Every real bug hit while building this, with root cause and fix, is logged in
-[`docs/PROBLEMS.md`](docs/PROBLEMS.md) — including two upstream dependency surprises
-(a broken constant in a newer `@x402/avm` release, and `AlgoAmount` not being exported where
-the docs implied it was) that were caught by verifying against the actual installed package
-rather than trusting either CLAUDE.md's or the package's own type declarations blindly.
+---
+
+## Neither wallet has real value
+
+Everything above runs on **Algorand Testnet** only. All ALGO and USDC involved are free,
+worthless test tokens obtained from public faucets — nothing here touches real money.
+
+## Secrets
+
+Neither project's `.env` files are committed (see each subproject's `.gitignore`). Anyone
+cloning this repo needs to supply their own testnet wallet(s) and a Groq API key before the
+paid flows will do anything — copy the `.env.example` in each folder and fill it in.
