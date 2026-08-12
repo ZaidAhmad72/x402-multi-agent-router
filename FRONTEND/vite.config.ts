@@ -11,6 +11,12 @@ export default defineConfig({
       '/balances': 'http://localhost:4000',
       '/admin': 'http://localhost:4000',
       '/self-test': 'http://localhost:4000',
+      '/auth': 'http://localhost:4000',
+      '/history': 'http://localhost:4000',
+      '/ws': {
+        target: 'ws://localhost:4000',
+        ws: true
+      }
     }
   }
 })

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { User, Lock, Activity, Sparkles, Zap, Fingerprint } from 'lucide-react';
 import '../index.css';
@@ -10,10 +10,54 @@ export default function Landing() {
   const [name, setName] = useState('');
   const [password, setPassword] = useState('');
 
-  const handleAuth = (e: React.FormEvent) => {
+  const [errorMsg, setErrorMsg] = useState('');
+  const [savedAccounts, setSavedAccounts] = useState<string[]>([]);
+
+  useEffect(() => {
+    const accs = localStorage.getItem('saved_accounts');
+    if (accs) {
+      setSavedAccounts(JSON.parse(accs));
+    }
+  }, []);
+
+  const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!username.trim()) return;
-    navigate(`/user/${encodeURIComponent(username)}`);
+    if (!username.trim() || !password.trim()) return;
+    setErrorMsg('');
+
+    const endpoint = activeTab === 'login' ? '/auth/login' : '/auth/register';
+    const payload = activeTab === 'login' 
+      ? { username, password } 
+      : { username, password, name };
+
+    try {
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+
+      if (!res.ok) {
+        setErrorMsg(data.error || 'Authentication failed');
+        return;
+      }
+
+      localStorage.setItem('session_user', username);
+      const accs = new Set(savedAccounts);
+      accs.add(username);
+      const newAccs = Array.from(accs);
+      localStorage.setItem('saved_accounts', JSON.stringify(newAccs));
+      
+      navigate(`/user/${encodeURIComponent(username)}`);
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Network error');
+    }
+  };
+
+  const loginAsSaved = (user: string) => {
+    localStorage.setItem('session_user', user);
+    navigate(`/user/${encodeURIComponent(user)}`);
   };
 
   return (
@@ -82,6 +126,19 @@ export default function Landing() {
               </button>
             </div>
             
+            {savedAccounts.length > 0 && (
+              <div style={{ marginBottom: '20px', padding: '12px', background: 'rgba(255,255,255,0.05)', borderRadius: '8px' }}>
+                <p style={{ fontSize: '13px', color: 'var(--text-muted)', marginBottom: '8px', textAlign: 'center' }}>Recent Accounts</p>
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', justifyContent: 'center' }}>
+                  {savedAccounts.map(acc => (
+                    <button key={acc} type="button" onClick={() => loginAsSaved(acc)} className="btn" style={{ padding: '6px 12px', fontSize: '12px', background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.1)' }}>
+                      <User size={12} style={{ display: 'inline', marginRight: '4px' }} /> {acc}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+            
             <form onSubmit={handleAuth} className="auth-form">
               <div className="form-group">
                 <label>Username</label>
@@ -130,6 +187,12 @@ export default function Landing() {
               <button type="submit" className="btn primary full-width mt-4" style={{marginTop: '20px', padding: '12px', fontSize: '15px'}}>
                 {activeTab === 'login' ? 'Login' : 'Create Account'}
               </button>
+              
+              {errorMsg && (
+                <div style={{ color: 'var(--danger)', fontSize: '13px', marginTop: '12px', textAlign: 'center' }}>
+                  {errorMsg}
+                </div>
+              )}
             </form>
           </div>
         </div>

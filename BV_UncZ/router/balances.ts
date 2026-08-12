@@ -7,13 +7,7 @@
 
 import { ALGOD_TESTNET, USDC_TESTNET_ASA_ID, AGENT_REGISTRY } from '../shared/constants';
 import { getStakeConfig } from './stake';
-
-export interface WalletBalance {
-  name: string;
-  address: string;
-  algo: number;
-  usdc: number;
-}
+import { WalletBalance } from '../shared/types/wallet';
 
 async function fetchBalance(name: string, address?: string): Promise<WalletBalance> {
   if (!address) {
