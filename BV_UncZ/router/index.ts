@@ -30,6 +30,31 @@ import { AGENT_REGISTRY } from '../shared/constants';
 config();
 config({ path: '../.env.wallets' });
 
+// Detects the class of error thrown when algod/indexer (testnet-api /
+// testnet-idx .algonode.cloud) is unreachable — undici's fetch wraps DNS/
+// connect failures in a generic "fetch failed" TypeError with a `.cause`
+// carrying the real code. Observed live and repeatedly during this project:
+// a real, intermittent outage of the public node, not a code or funds bug.
+// Distinguishing it lets SETTLE (and friends) return an honest, actionable
+// message instead of a bare "Internal server error".
+function isNetworkConnectivityError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  if (error.message.includes('fetch failed')) return true;
+  const causeCode = (error as { cause?: { code?: string } }).cause?.code;
+  return (
+    typeof causeCode === 'string' &&
+    (causeCode.startsWith('UND_ERR_CONNECT') ||
+      causeCode === 'ENOTFOUND' ||
+      causeCode === 'ECONNREFUSED' ||
+      causeCode === 'ETIMEDOUT')
+  );
+}
+
+const NETWORK_ERROR_MESSAGE =
+  'Could not reach the Algorand testnet node (algonode.cloud) — this is a known, intermittent ' +
+  'outage of the public node, not a code or funds problem. Nothing was signed or submitted. ' +
+  'Wait a moment and retry.';
+
 const port = parseInt(process.env.PORT || '4000', 10);
 
 const app = new Hono();
@@ -102,6 +127,9 @@ app.post('/route', async (c) => {
       return c.json({ error: error.message, phase: 'QUOTE', zeroSpend: true, qualityVerdicts }, 502);
     }
     console.error('Unexpected error in QUOTE phase:', error);
+    if (isNetworkConnectivityError(error)) {
+      return c.json({ error: NETWORK_ERROR_MESSAGE, phase: 'QUOTE', zeroSpend: true, qualityVerdicts }, 502);
+    }
     return c.json({ error: 'Internal server error' }, 500);
   }
 
@@ -127,6 +155,9 @@ app.post('/route', async (c) => {
         },
         502
       );
+    }
+    if (isNetworkConnectivityError(error)) {
+      return c.json({ error: NETWORK_ERROR_MESSAGE, phase: 'QUOTE', zeroSpend: true, qualityVerdicts }, 502);
     }
     return c.json({ error: 'Internal server error' }, 500);
   }
