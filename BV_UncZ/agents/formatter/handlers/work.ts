@@ -155,18 +155,24 @@ function renderBarChart(sourceAmount: number, from: string, rows: ConversionRow[
   const height = rows.length * rowHeight + 44;
   const fmt = (n: number) => n.toLocaleString('en-US', { maximumFractionDigits: 2 });
 
+  // fill is required on every <text> — SVG defaults to black, which is
+  // invisible against the dashboard's near-black chart background (this was
+  // a real bug: the labels were always there, just black-on-black).
+  const TEXT_COLOR = '#e6e8eb';
+
   const rows_ = rows
     .map((r, i) => {
       const y = 40 + i * rowHeight;
       return (
         `<rect x="0" y="${y - 16}" width="4" height="20" fill="#4f8ef7" />` +
-        `<text x="14" y="${y}" font-size="13" font-family="monospace" font-weight="bold">${r.currency}</text>` +
-        `<text x="70" y="${y}" font-size="13" font-family="monospace">${fmt(r.amount)}</text>`
+        `<text x="14" y="${y}" font-size="13" font-family="monospace" font-weight="bold" fill="${TEXT_COLOR}">${r.currency}</text>` +
+        `<text x="70" y="${y}" font-size="13" font-family="monospace" fill="${TEXT_COLOR}">${fmt(r.amount)}</text>`
       );
     })
     .join('');
 
-  const title = `<text x="0" y="16" font-size="13" font-family="monospace" font-weight="bold">${fmt(sourceAmount)} ${from} equals:</text>`;
+  const title = `<text x="0" y="16" font-size="13" font-family="monospace" font-weight="bold" fill="${TEXT_COLOR}">${fmt(sourceAmount)} ${from} equals:</text>`;
+  const background = `<rect x="0" y="0" width="${width}" height="${height}" fill="#0d0f13" rx="6" />`;
 
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}"><g transform="translate(8,8)">${title}${rows_}</g></svg>`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">${background}<g transform="translate(8,8)">${title}${rows_}</g></svg>`;
 }
