@@ -22,7 +22,7 @@ smart contract required. That primitive is the entire point of this project.
 
 Two of us built independently before syncing up:
 
-- **Rohan** built `BV_UncZ/` — three separately-paid agents, fanned in through one real
+- **Rohan** built `BV_UncZ/` — several separately-paid agents, fanned in through one real
   atomic settlement group. This is the actual PS0404 submission.
 - **Zaid** built `reference-implementation/` — one payment-gated endpoint that bundles
   three services behind a single $0.01 payment. No atomic group anywhere in it (confirmed
@@ -94,6 +94,69 @@ stops responding, so the quote phase fails and the group is never built, zero sp
 a routing fee (a 5th leg in the group, so the business model is something you can point at
 in the group, not a claim on a slide).
 
+### What the user actually sees
+
+Open `http://localhost:4000` and there's one page: a task box, a max-spend box, three
+one-click example-task buttons (General / Currency / Weather + currency — see §13), a
+**Route** button and a **Preview (no payment)** button, and a phase tracker (QUALITY →
+QUOTE → SETTLE → REDEEM). Once something runs, panels appear below it: a per-agent
+quality-verdict table, a settlement panel with a clickable group-ID/explorer link, a
+paid/slashed receipt table, and each agent's actual output (findings, a written summary,
+a currency chart, a weather reading, or a narrative — whichever agents ran). Further
+down: a live wallet-balance table and three demo panels (kill switch, quality-gate
+override, self-test replay).
+
+Type a task, click **Route**, and the four phase boxes light up green (or red, wherever
+it stopped) in real time as the request actually works through QUALITY → QUOTE → SETTLE
+→ REDEEM against the live backend. Nothing on this page is mocked or simulated when you
+click Route — every button fires a real HTTP call to the router, which fires real HTTP
+calls to real agent processes and a real Algorand testnet transaction.
+
+### Roles — Algorand, wallets, x402, agents, router
+
+For anyone new to any one of these pieces:
+
+- **Algorand** is the blockchain — a shared, public ledger that the router, every agent,
+  and anyone holding an explorer link can all independently check. It's what makes
+  "everyone got paid, or nobody did" a fact enforced by consensus, not a claim you have
+  to trust the router on. Its **atomic transaction group** feature (up to 16 transactions
+  that commit or fail together, no smart contract needed) is the one primitive this
+  entire project is built on.
+- A **wallet** is just a public address plus a private key. The address is where money
+  can be sent; the private key is what proves you're allowed to spend from it, by
+  signing a transaction. Every party here — the router, each agent, the routing-fee
+  treasury, the stake pool — has its own separate wallet. All of them hold **testnet**
+  ALGO/USDC, worth nothing real (see the note near the bottom of the README).
+- **x402** is the actual web standard being demonstrated: the HTTP `402 Payment
+  Required` status code, extended with a header describing exactly what to pay and
+  where. A resource challenges with `402`; the payer signs a payment matching that
+  challenge, retries, and gets the real response. Every agent here speaks this protocol
+  natively (via the `@x402/*` packages) — the router's QUOTE phase is literally
+  "collect everyone's `402` challenge," and REDEEM is "prove the challenge was met."
+  Right now the *router itself* plays the paying party in that exchange (see §4) — a
+  real end user speaking x402 directly to an agent is proven separately in `client/`,
+  just not wired to the dashboard's Route button yet.
+- The **agents** are the actual paid workers — five small, independent services, each
+  its own process, port, wallet, and price, each doing one real, different job:
+
+  | Agent | Price | Does | How |
+  |---|---|---|---|
+  | research | $0.03 | gathers sourced findings on a topic | Groq (LLM) |
+  | writer | $0.02 | turns findings into a written summary | Groq (LLM) |
+  | formatter | $0.01 | converts an amount into other currencies, renders a chart | deterministic — live FX API, static fallback if it's down |
+  | weather | $0.02 | live current weather for a city | deterministic — live Open-Meteo API, static fallback if it's down |
+  | analysis | $0.02 | synthesizes weather and/or currency results into a narrative | Groq (LLM) |
+
+  They know nothing about each other or about the router beyond one HTTP call each; the
+  router is the only thing that ever sees the full picture. Which subset of the five
+  actually runs is decided per task by `router/selectAgents.ts` (a Groq call, see §7's
+  P3 row) — see §13 for the two newest agents and the selection bugs found while adding them.
+- The **router** is the orchestrator — the only piece that talks to everyone. It never
+  does any of the actual work itself; its whole job is deciding which agents a task
+  needs, running the quality check, collecting their prices, building and signing the
+  one atomic payment, then collecting their results and handing back one combined
+  answer plus one group ID.
+
 ---
 
 ## 4. How payment actually works, from a user's perspective — read this carefully
@@ -102,9 +165,9 @@ This is the part that's easy to assume wrong, so spelling it out plainly:
 
 **Right now, the person clicking "Route" on the dashboard never signs anything and never
 connects a wallet.** The router pays all the agents itself, out of its own pre-funded
-treasury wallet (`ROUTER_ADDR` — genuinely funded as of §12). From the user's point of view,
-it looks like: type a task, click a button, get a real result and a real group ID. There is
-no "approve this payment" prompt in that flow today.
+treasury wallet (`ROUTER_ADDR` — genuinely funded as of §12). From the user's point of
+view, it looks like: type a task, click a button, get a real result and a real group ID.
+There is no "approve this payment" prompt in that flow today.
 
 That's *not* an oversight — it matches how `BV_UncZ` was scoped: the interesting, novel part
 of this project is the **outbound leg** (router → N agents, atomically), and that's fully
@@ -138,21 +201,25 @@ x402/
 │   ├── CLAUDE.md                  ← Rohan's original spec/working agreement (unedited)
 │   ├── README.md                  ← BV_UncZ's own architecture doc
 │   ├── docs/PROBLEMS.md           ← every real bug hit building BV_UncZ, root cause + fix
-│   ├── .env.wallets                ← gitignored — USER/ROUTER/ROUTER_FEE/AGENT1-3 wallets
+│   ├── .env.wallets                ← gitignored — USER/ROUTER/ROUTER_FEE/AGENT1-5/
+│   │                                  STAKE_FORMATTER wallets
 │   ├── shared/                    ← constants (CAIP-2, ASA ID, routing fee, AGENT_REGISTRY),
 │   │                                 types, replayGuard, verifyPayment (agent-side check)
 │   ├── agents/
 │   │   ├── research/  (port 4001, $0.03) — real Groq findings
 │   │   ├── writer/    (port 4002, $0.02) — real Groq synthesis of research's findings
-│   │   └── formatter/ (port 4003, $0.01) — real live currency conversion, NO LLM (hard
-│   │                                        requirement — heterogeneity is judged)
+│   │   ├── formatter/ (port 4003, $0.01) — real live currency conversion, NO LLM (hard
+│   │   │                                    requirement — heterogeneity is judged)
+│   │   ├── weather/   (port 4004, $0.02) — real live weather lookup, NO LLM
+│   │   └── analysis/  (port 4005, $0.02) — real Groq synthesis of weather/currency data
 │   ├── router/         ← index.ts (Hono app), qualityGate.ts, stake.ts, quote.ts, settle.ts,
 │   │                      redeem.ts, selectAgents.ts, selfTestReplay.ts, balances.ts,
 │   │                      debugPreview.ts, previewCall.ts (shared no-payment call helper)
 │   ├── client/          ← standalone x402 client loop: unpaid → 402 → signed retry → 200
 │   │                       + decoded settlement receipt, run directly against one agent
 │   ├── ui/               ← dashboard, served by the router itself at :4000
-│   └── pera_wallet_setup/scripts/ ← generate-wallets, check-balance, opt-in-usdc, seed-stake
+│   └── pera_wallet_setup/scripts/ ← generate-wallets, check-balance, opt-in-usdc, seed-stake,
+│                                     add-agent-wallet, fund-and-optin-agent, fund-stake-usdc
 └── reference-implementation/      ← SOURCE MATERIAL, NOT the submission
     ├── docs/PROBLEMS.md            ← its own bug log (facilitator mismatch, faucet
     │                                  failures, 4 regex bugs that motivated an LLM rewrite)
@@ -171,23 +238,25 @@ source of things to port over.
 `shared/constants.ts`'s `AGENT_REGISTRY` is the single source of truth for which agents
 exist. Every part of the router — quoting, settling, redeeming, the quality gate, dynamic
 agent selection, and the dashboard UI — reads this list; **none of them hardcode agent
-names anymore.** To add a fourth (or fifth, ...) agent:
+names.** To add another agent:
 
-1. Build its service under `agents/<name>/` — same shape as the three existing ones: its own
+1. Build its service under `agents/<name>/` — same shape as the existing ones: its own
    port, its own wallet, a price, an x402-gated `POST /work`, a `POST /redeem` that verifies
    on-chain, and an unprotected `POST /debug/preview` for the quality gate and demo mode.
-2. Add its wallet address + mnemonic to `.env.wallets`.
+2. Add its wallet address + mnemonic to `.env.wallets` (`pera_wallet_setup/scripts/add-agent-wallet.ts`
+   generates one; `fund-and-optin-agent.ts` funds it with ALGO from the router and opts it into USDC).
 3. Add one entry to `AGENT_REGISTRY`:
    ```ts
    {
      name: 'translator',
-     url: 'http://localhost:4004',
+     url: 'http://localhost:4006',
      description: 'translates text into another language. Needed when the task asks for a translation.',
      dependsOn: ['writer'],                              // optional — auto-included when this agent is
      buildInput: (task, outputs) => ({ text: outputs.writer?.summary?.body ?? task }),
    }
    ```
-   `description` is what the Groq agent-selector reads to decide when this agent is relevant.
+   `description` is what the Groq agent-selector reads to decide when this agent is relevant
+   (keep it purely descriptive — it's also fed to the quality judge, see §13's second bug).
    `dependsOn` names other agents whose output this one needs — selecting this agent
    automatically pulls in its dependencies too. `buildInput` builds this agent's request body
    from the task and every prior agent's output (keyed by name).
@@ -195,7 +264,10 @@ names anymore.** To add a fourth (or fifth, ...) agent:
 That's it — `quote.ts`/`settle.ts` already loop over whatever registry they're given,
 `redeem.ts` and `debugPreview.ts` walk the registry in order calling each `buildInput`, and
 the dashboard fetches `GET /agents` on load instead of hardcoding names, so the kill-switch
-panel and result rendering pick up the new agent automatically too.
+panel, self-test replay panel, and result rendering pick up the new agent automatically too.
+
+**This is not theoretical** — §13 is exactly this process followed twice in a row (weather,
+analysis), with zero changes needed to any of the files above.
 
 ---
 
@@ -210,13 +282,15 @@ Everything below is **done, verified live, committed, and pushed**:
 | P2 | Real research agent (Groq findings) | `reference-implementation`'s Groq analysis pattern | Tested directly: 5 real, relevant findings with source attribution |
 | P2 | Real writer agent (Groq synthesis) | same | Tested directly: coherent summary synthesizing findings |
 | P2 | Real formatter agent (live currency conversion, SVG) | `reference-implementation/server/src/agents/currencyAgent.ts` | Tested directly: correct live FX rates, correct SVG. Replaced a formatter that rendered a meaningless bar chart of *per-line character counts* — real value now. |
+| P2 | Real weather agent (live Open-Meteo lookup) | `reference-implementation/server/src/agents/weatherAgent.ts` | Ported near-verbatim (location extraction + geocoding + forecast lookup). Tested directly and through a real settlement: real temperature/wind/condition for named cities. See §13. |
+| — | Analysis agent (weather/currency narrative synthesis) | Fills `reference-implementation/server/src/agents/analysisAgent.ts`'s role | New code (currency itself was already covered by formatter — see P2 above), same idea: Groq ties together whatever domain data ran into a short narrative. Tested directly and through a real settlement. See §13. |
 | P4 | No-payment preview mode (`/debug/preview`, on each agent + router) | `reference-implementation`'s "Preview (no payment)" button | Tested live end-to-end through the router: real N-agent pipeline, zero payment |
 | — | Routing fee (5th leg in the settlement group) | (new, not from either repo — the analysis doc's recommendation) | Verified live in logs: `3 payout(s) + 1 routing fee + 1 fee-payer txn` |
-| P3 | Groq-based dynamic agent selection (`router/selectAgents.ts`) | `reference-implementation`'s `llmExtractor.ts` pattern | Verified live: "Explain how Algorand consensus works" → QUOTE selects `[research, writer]` only, total $0.05, group size 4. "Convert 250 USD to EUR..." → selects all three, total $0.06, group size 5. Falls back to all three on any Groq failure. |
+| P3 | Groq-based dynamic agent selection (`router/selectAgents.ts`) | `reference-implementation`'s `llmExtractor.ts` pattern | Verified live across 5 agents now — see §13 for the latest numbers. |
 | — | "Preview (no payment)" button actually wired into the dashboard UI | (bug found in `BV_UncZ` itself) | The `/debug/preview` route existed but nothing in `ui/index.html` called it. Now wired up and tested live in-browser. |
 
-**`MOCK=true` is still fully wired** on research/writer as a working fallback — flip one env
-var if Groq or wifi is unreliable during the actual demo. Never mocks payment, only content.
+**`MOCK=true` is still fully wired** on research/writer/analysis as a working fallback — flip
+one env var if Groq or wifi is unreliable during the actual demo. Never mocks payment, only content.
 
 ### What's NOT been ported (and shouldn't be, carelessly)
 
@@ -235,10 +309,11 @@ Picked from the analysis doc's shortlist (it rated this the strongest single mov
 
 **What it actually does:** for every agent the task selected, call its free `/debug/preview`
 route (same one the demo "Preview" button uses) to get a real trial output at zero cost, then
-send that output to a Groq judge with the prompt "is this genuinely relevant and substantive
-for the task, or not?" A rejection either **slashes** that agent (if it has a stake configured
-— see §9) or **aborts the entire route** (if it doesn't) — `phase: "QUALITY"`,
-`zeroSpend: true` — before any agent is even asked for a price, let alone paid.
+send that output to a Groq judge — scoped to that agent's own job (see §13's bug #2) — with
+the prompt "is this genuinely relevant and substantive for *your* part of the task, or not?"
+A rejection either **slashes** that agent (if it has a stake configured — see §9) or **aborts
+the entire route** (if it doesn't) — `phase: "QUALITY"`, `zeroSpend: true` — before any agent
+is even asked for a price, let alone paid.
 
 **Fails open, on purpose:** if `GROQ_API_KEY` is missing or the Groq call errors, the gate
 lets the request through rather than blocking the whole product on an LLM outage — same
@@ -288,22 +363,19 @@ atomic group** — instead of the whole job just failing.
 - An agent that fails and has **no** stake configured still aborts the whole route — the old,
   simpler guarantee is the fallback when there's no financial accountability to reach for.
 
-**Verified live**, down to the actual blockchain boundary: targeting formatter to fail (task:
-"Convert 250 USD to EUR") produced research/writer passing the real Groq judge, formatter
-correctly marked `staked: true` and rejected, and this log line —
+**Verified live, for real, on-chain** (as of §12's funding, this now actually settles instead
+of just composing/signing): targeting formatter to fail on a currency task produces research
+and writer passing the real Groq judge, formatter correctly marked `staked: true` and
+rejected, `router.out.log` showing —
 
 ```
 SETTLE — building one atomic group: 2 payout(s) + 1 slash(es) + 1 routing fee + 1 fee-payer txn
 ```
 
-— followed by 5 real transaction IDs, meaning the composer built the group, and **both the
-router's key and the stake wallet's key signed successfully**. It only failed at submission on
-the familiar `underflow on subtracting` error — the stake wallet is real, funded with ALGO,
-and opted into the USDC ASA (via `seed-stake.ts`), but like every other wallet in this project
-has 0 actual USDC. Proven correct one step further than the base flow, blocked by the exact
-same, single known blocker (§12).
+— and a real settled group with formatter's outcome `"slashed"`, a real 0.5 USDC rebate txId
+landing at the user's address, while research/writer show `"paid"` in the same group.
 
-**The receipt** (`POST /route`'s JSON response, and the dashboard's new "Receipt" panel) makes
+**The receipt** (`POST /route`'s JSON response, and the dashboard's "Receipt" panel) makes
 the outcome explicit per agent, not just a settled/not-settled flag:
 ```json
 {
@@ -341,7 +413,7 @@ rejected`. This is a real race against the actual in-memory guard in the actual 
 process — not simulated — because the guard's `Map` check runs synchronously before any
 `await`, so Node's single-threaded event loop serializes concurrent hits on the same key
 regardless of how close together the HTTP requests arrive. Also on the dashboard, under
-"Self-test: replay guard."
+"Self-test: replay guard" — works against any of the five agents.
 
 ---
 
@@ -370,41 +442,102 @@ in the "Settlement" panel.
 into `ROUTER_ADDR`/`ROUTER_MNEMONIC` in `.env.wallets` (gitignored, not in this repo), verified
 its balance live via algod *before* swapping it in. This was the single dominant blocker for
 the entire project (see both `PROBLEMS.md` files for the faucet saga that preceded this) — it
-is no longer a blocker. Three real settlements ran immediately after, back to back:
+is no longer a blocker. Several real settlements have run since, back to back, including:
 
-| Task | Agents paid | Outcome | Group ID / explorer |
+| Task | Agents paid | Outcome | Group ID / round |
 |---|---|---|---|
 | "Summarize algorand x402 atomic groups..." | research, writer | both `paid` | `2o9GZEbH5hdYat/trOYW01qVR1l2a21w+rIAdvmLtsE=`, round 66237349 |
 | "Convert 250 USD to EUR" | research, writer, formatter | all `paid` | `VTvBIHhE1Vn/slppARJbOKuHO3q74SR/2h6NLlGeBKI=`, round 66237361 |
-| "Convert 250 USD to EUR" (formatter forced to fail) | research `paid`, writer `paid`, **formatter `slashed`** | 0.5 USDC rebate landed at the user address, real on-chain txId `C2UZ53WNFINFHE7OXAVR7WPC5TFTWUGJXYHOXCIOYSYUQASLY6KA` | `Z9jaMck6ajo8M2N7TPAryPAOvXu7pSRQNT+MDhWln+M=`, round 66237390 |
+| "Convert 250 USD to EUR" (formatter forced to fail) | research/writer `paid`, **formatter `slashed`** | 0.5 USDC rebate to the user, on-chain txId `C2UZ53WNFINFHE7OXAVR7WPC5TFTWUGJXYHOXCIOYSYUQASLY6KA` | `Z9jaMck6ajo8M2N7TPAryPAOvXu7pSRQNT+MDhWln+M=`, round 66237390 |
+| "whats the weather in tokyo" | weather, analysis | both `paid` | `70dAUELG7paB5iwy4RtE44x84AcJDFGfcedMK0y5kTQ=`, round 66238655 |
+| "whats the weather in berlin and convert 100 usd to eur" | all 5 agents | all `paid` | `q2KxwGZuv9rvUZg7o682kjJTbf8tYdubegzJHxSwTw0=`, round 66240623 |
 
-All three: `curl` the explorer URL pattern `https://lora.algokit.io/testnet/block/<round>/group/<url-encoded-groupId>` — every one resolves to a real, multi-transaction Algorand testnet group. Balances were checked before and after each call via `GET /balances` and moved by exactly the expected amounts — no discrepancy. The third row is the actual stake+slash "money shot" (§9), not just composed and signed — **settled**, with the agent paid nothing and the user's stake-funded rebate confirmed on-chain.
+Each: `curl` the explorer URL pattern `https://lora.algokit.io/testnet/block/<round>/group/<url-encoded-groupId>` — every one resolves to a real, multi-transaction Algorand testnet group. Balances were checked before and after each call via `GET /balances` and moved by exactly the expected amounts — no discrepancy. The stake+slash row is the actual "money shot" (§9) — not just composed and signed, **settled**, with the agent paid nothing and the user's stake-funded rebate confirmed on-chain.
 
-The stake wallet was funded the same way — 2 USDC sent from the now-flush router wallet via a
-new one-off script, `pera_wallet_setup/scripts/fund-stake-usdc.ts` (`npx tsx
-fund-stake-usdc.ts FORMATTER <microUsdc>`), not part of the live router, same pattern as
-`seed-stake.ts`.
+The stake wallet and the two new agent wallets (weather, analysis) were funded the same way —
+small amounts sent from the now-flush router wallet via one-off scripts
+(`fund-stake-usdc.ts`, `fund-and-optin-agent.ts`), never part of the live router.
 
 **What this changes for the PPT:** we now have exactly the artifact that was missing for
-months of this project's timeline — a real, confirmed, explorer-verifiable group ID, for both
-the plain multi-agent payout case and the stake+slash case. Screenshot the explorer pages
-before the demo in case testnet is flaky on the day.
+months of this project's timeline — a real, confirmed, explorer-verifiable group ID, for the
+plain multi-agent payout case, the stake+slash case, and the weather-agent case. Screenshot
+the explorer pages before the demo in case testnet is flaky on the day.
 
-**A concrete reason to take that last sentence seriously:** minutes after capturing the three
-settlements above, `testnet-api.algonode.cloud` started timing out entirely — confirmed from
-the router's own host machine (not a tooling artifact), general internet unaffected, only that
-one host. `GET /balances` silently shows every wallet as `0`/`0` during an outage like this
-(`balances.ts` fails open to zero on any fetch error) — **that is not the same as the funds
-being gone.** The three group IDs above and the confirmed on-chain txIds inside them are the
-actual source of truth; re-check via the explorer links once connectivity recovers, don't
-trust a zero balance reading alone. This is the same class of transient connectivity issue
-noted earlier against the facilitator during agent startup — algonode's testnet endpoints have
-been intermittently flaky all project. Worth a `check-balance.ts` run right before walking on
+**A concrete reason to take that last sentence seriously:** at more than one point during this
+session, `testnet-api.algonode.cloud` and/or `testnet-idx.algonode.cloud` started timing out
+or refusing connections entirely — confirmed from the router's own host machine (not a tooling
+artifact), general internet unaffected, only those specific hosts, and it recovered on its own
+each time within roughly half an hour. `GET /balances` silently shows every wallet as `0`/`0`
+during an outage like this (`balances.ts` fails open to zero on any fetch error) — **that is
+not the same as the funds being gone.** A REDEEM step can also fail this way even after a
+successful SETTLE (`router/index.ts`'s `phase: "SETTLED", settledButNotRedeemed: true`
+response) — money already moved for real, only the post-payment on-chain verification hit the
+outage. The group IDs above and the confirmed on-chain txIds inside them are the actual source
+of truth; re-check via the explorer links once connectivity recovers, don't trust a zero
+balance or a redeem failure alone. Worth a `check-balance.ts` run right before walking on
 stage, not relying on a `/balances` snapshot from earlier in the day.
 
 ---
 
-## 13. What's still left
+## 13. Weather + analysis agents — restoring the full weather/currency/analysis trio
+
+Zaid's original `reference-implementation/` had three domain agents: weather, currency,
+analysis. `BV_UncZ`'s formatter already covers currency (see §7), so completing the trio
+meant adding two more agents to the registry: **weather** (port 4004, $0.02) and
+**analysis** (port 4005, $0.02).
+
+**weather** ports `reference-implementation/server/src/agents/weatherAgent.ts` almost
+verbatim — deterministic, no LLM, a naive-but-effective location extractor plus a live
+Open-Meteo lookup. Same resilience pattern already applied to formatter: if Open-Meteo
+is unreachable, it falls back to a small static table for a handful of major cities,
+clearly marked `"live": false` rather than silently passing off stale data as current.
+
+**analysis** is new code filling the role `reference-implementation`'s `analysisAgent.ts`
+played — a Groq call that ties together whatever weather and/or currency data actually ran
+into a short plain-language narrative. It reads from the outputs of whichever agents ran
+before it (`outputs.weather`, `outputs.formatter`), so it works whether the task involved
+just weather, just currency, or both.
+
+The dashboard now has three one-click example-task buttons — **General**, **Currency**,
+**Weather + currency** — so this is a real, selectable alternative task type, not a hidden
+capability: pick between the original atomic-group demo task and a weather-flavored one.
+
+**This was the first real test of the pluggable registry built in §6, and it held up: the two
+new agents needed zero changes anywhere else.** `quote.ts`, `settle.ts`, `redeem.ts`,
+`debugPreview.ts`, the kill switch, and self-test replay all picked them up automatically
+through `AGENT_REGISTRY`. The dashboard discovered them via `GET /agents` without a UI change.
+
+**Three real bugs surfaced by combining weather + currency in one task, live, and fixed:**
+
+1. **formatter's amount parsing grabbed the wrong number.** Its regex took the first digit
+   sequence anywhere in its input text. When formatter's input is writer's summary (which
+   might now mention a temperature *before* the dollar amount — "...temperatures ranging
+   from 1°C to 23°C... 100 USD is approximately..."), it parsed `1` instead of `100`. Fixed
+   to prefer a number immediately adjacent to a currency word, only falling back to "first
+   number anywhere" if no currency-adjacent match exists.
+2. **The quality judge scored each agent against the whole task, not its own job.** A
+   compound task like "weather in Berlin and convert 100 USD to EUR" made the judge
+   penalize the weather agent for "missing currency conversion" — a job it was never
+   supposed to do. Fixed by passing each agent's own registry `description` into the judge
+   prompt and explicitly telling it not to penalize an agent for parts of the task other
+   agents handle.
+3. **The agent selector redundantly included research+writer alongside the specialized
+   agents** that already fully covered the task, wasting money on overlapping coverage.
+   Fixed with an explicit rule in `selectAgents.ts`'s system prompt: prefer a specific
+   agent over the general research/writer pair when the specific one already covers that
+   part of the task. Deliberately *not* fixed by adding exclusion language to research's
+   own `description` — that field is also fed to the judge, and negative/exclusionary
+   phrasing there got misread as a quality criterion, which is what caused bug 2's sibling
+   failure mode in the first place. Lesson: keep agent descriptions purely descriptive;
+   put selection *rules* in the selector's own prompt, not in individual agents' text.
+
+**Verified live, real settlements, after all three fixes** — see the last two rows of §12's
+table: a pure weather task correctly selects just weather+analysis (2 agents, cheaper), and a
+combined weather+currency task settles cleanly with all 5 agents, every one `paid`.
+
+---
+
+## 14. What's still left
 
 **Next milestone, not yet started:** wiring the actual end-user-facing x402 payment flow onto
 the front of `/route` (see §4) — today the router pays from its own pre-funded wallet (now
@@ -415,7 +548,7 @@ work, it just isn't hooked up to the dashboard's "Route" button yet.
 
 ---
 
-## 14. How to test the different scenarios
+## 15. How to test the different scenarios
 
 As of §12, `ROUTER_ADDR` is genuinely funded, so the normal-task case below now actually
 settles for real. Every other case here still needs no funds at all — they fail (correctly)
@@ -427,10 +560,13 @@ curl -X POST http://localhost:4000/route -H "Content-Type: application/json" \
   -d '{"task":"Explain how Algorand consensus works","maxSpend":0.10}'
 ```
 Expect: `phase: "REDEEMED"`, a real `settlement.groupId` + `explorerUrl`, and every agent in
-`receipt` marked `"outcome":"paid"` — a real, complete, on-chain settlement (see §12 for three
+`receipt` marked `"outcome":"paid"` — a real, complete, on-chain settlement (see §12 for
 already-captured examples). If your own `.env.wallets` isn't funded, this instead fails
 cleanly at SETTLE with a clear "router wallet needs funding" message — still proves everything
 up to that point works.
+
+**A weather task (the new example)** — try `whats the weather in tokyo` or click the
+**"Weather + currency"** example button on the dashboard for the combined version.
 
 **"Not good enough answer → no payment" (the quality gate rejecting):**
 ```bash
@@ -459,15 +595,14 @@ caught *before* the group is ever built, never as a partial payment.
 curl -X POST http://localhost:4000/route -H "Content-Type: application/json" \
   -d '{"task":"Convert 250 USD to EUR and explain the trend","maxSpend":0.01}'
 ```
-Expect: `BudgetExceededError` — total quoted cost (all 3 agents + routing fee, since this
-task needs currency conversion) exceeds the $0.01 cap. Nothing is ever signed.
+Expect: `BudgetExceededError` — total quoted cost exceeds the $0.01 cap. Nothing is ever signed.
 
 **Task-dependent agent selection (fewer agents quoted when fewer are needed):**
 ```bash
 curl -X POST http://localhost:4000/route -H "Content-Type: application/json" \
-  -d '{"task":"Explain how Algorand consensus works","maxSpend":0.10}'   # no currency → 2 agents, $0.05
+  -d '{"task":"whats the weather in tokyo","maxSpend":0.10}'                    # weather only → 2 agents, $0.04
 curl -X POST http://localhost:4000/route -H "Content-Type: application/json" \
-  -d '{"task":"Convert 250 USD to EUR","maxSpend":0.10}'                 # currency → 3 agents, $0.06
+  -d '{"task":"Convert 250 USD to EUR","maxSpend":0.10}'                        # currency → 3 agents, $0.06
 ```
 Check `router.out.log` (or the terminal running `npm run dev:router`) for the `agent
 selection: [...]` line and the QUOTE total to see N actually change per request.
@@ -482,11 +617,8 @@ curl -X POST http://localhost:4000/admin/quality-gate/target-clear   # reset whe
 ```
 Expect: `qualityVerdicts` shows research/writer passing (real judge) and formatter failing
 with `staked: true`. The route does **not** abort — it proceeds into QUOTE and SETTLE, and
-`router.out.log` shows `SETTLE — building one atomic group: 2 payout(s) + 1 slash(es) + ...`.
-With a funded router + stake wallet this now actually settles: `receipt` shows research/writer
-`"paid"` and formatter `"slashed"` with a real `rebateToUser` — this exact sequence is how the
-real slash in §9/§12 was captured. Without stake wallet funds it fails cleanly one step further
-than the base flow (same underflow, on the stake wallet instead of the router).
+`receipt` shows research/writer `"paid"` and formatter `"slashed"` with a real `rebateToUser`
+— this exact sequence is how the real slash in §9/§12 was captured.
 
 **Self-test the replay guard** (no group/task needed at all):
 ```bash
@@ -497,24 +629,26 @@ Expect: `passedGuard: 1`, `replayRejected: 5` (or whatever `n` you pick, always 
 passing). See §10 for what the numbers mean.
 
 **All of the above work identically from the dashboard** — the phase boxes (QUALITY → QUOTE →
-SETTLE → REDEEM) turn red at whichever step failed, with the same error text, and the new
+SETTLE → REDEEM) turn red at whichever step failed, with the same error text, and the
 "Quality gate results" / "Receipt" panels show the per-agent detail live.
 
 ---
 
-## 15. Running it yourself
+## 16. Running it yourself
 
 ```bash
 cd BV_UncZ
 npm install
 cd pera_wallet_setup/scripts && npm install && cd ../..
-# .env.wallets at BV_UncZ root needs USER/ROUTER/ROUTER_FEE/AGENT1/AGENT2/AGENT3 _ADDR + _MNEMONIC
+# .env.wallets at BV_UncZ root needs USER/ROUTER/ROUTER_FEE/AGENT1-5 _ADDR + _MNEMONIC
 # + GROQ_API_KEY (used by router/selectAgents.ts, router/qualityGate.ts, and the
-#   research/writer agents; router falls back to safe defaults if it's missing —
+#   research/writer/analysis agents; router falls back to safe defaults if it's missing —
 #   optional but recommended)
 npm run dev:research    # port 4001
 npm run dev:writer      # port 4002
 npm run dev:formatter   # port 4003
+npm run dev:weather     # port 4004
+npm run dev:analysis    # port 4005
 npm run dev:router      # port 4000 — dashboard at http://localhost:4000
 ```
 
