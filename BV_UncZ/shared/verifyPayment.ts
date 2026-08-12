@@ -34,7 +34,14 @@ export async function verifyGroupPayment(params: {
 
   const data = await res.json();
   const txns: any[] = data.transactions ?? [];
-  const txn = txns.find((t) => t['intra-round-offset'] === index);
+  // The indexer's group-id filter already scopes txns to this group, but
+  // intra-round-offset is the position within the confirming ROUND, not
+  // within the group — it only happens to equal the group index when the
+  // group lands alone in a quiet round. Sort by that offset and use array
+  // position instead, which is stable regardless of what else confirms in
+  // the same round.
+  const ordered = [...txns].sort((a, b) => a['intra-round-offset'] - b['intra-round-offset']);
+  const txn = ordered[index];
 
   if (!txn) {
     return { valid: false, reason: `no transaction at index ${index} in group ${groupId}` };

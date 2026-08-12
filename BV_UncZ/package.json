@@ -6,12 +6,14 @@
   "workspaces": [
     "shared",
     "agents/*",
-    "router"
+    "router",
+    "client"
   ],
   "scripts": {
     "dev:research": "npm run dev --workspace=agent-research",
     "dev:writer": "npm run dev --workspace=agent-writer",
     "dev:formatter": "npm run dev --workspace=agent-formatter",
-    "dev:router": "npm run dev --workspace=router"
+    "dev:router": "npm run dev --workspace=router",
+    "test:agent": "npm run test:agent --workspace=client"
   }
 }
