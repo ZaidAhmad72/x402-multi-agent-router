@@ -51,7 +51,7 @@ requiredWallets.forEach((w) => {
   if (addr) {
     console.log(`[OK] ${w.name} loaded: ${addr.substring(0, 10)}...`);
   } else {
-    console.warn(`[WARN] ${w.name} (${w.var}) is missing from .env.wallet`);
+    console.warn(`[WARN] ${w.name} (${w.var}) is missing from .env.wallets`);
   }
 });
 console.log('----------------------------------\n');
