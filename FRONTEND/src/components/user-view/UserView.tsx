@@ -1,5 +1,5 @@
 import { useState, type RefObject } from 'react';
-import { Menu, SlidersHorizontal } from 'lucide-react';
+import { Menu, SlidersHorizontal, HelpCircle } from 'lucide-react';
 import './user-view.css';
 import type { Balance, Message, Phase, Session } from '../../types';
 import UserSidebar from './UserSidebar';
@@ -90,6 +90,27 @@ export default function UserView(props: UserViewProps) {
             <div className="uv-topbar-title">Atomic Multi-Agent Service Router</div>
             <div className="uv-topbar-sub">Welcome, {username || 'there'} — ask a question below</div>
           </div>
+          <button
+            className="uv-icon-btn"
+            onClick={onHelp}
+            title="Open Tutorial Window"
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              width: 'auto',
+              padding: '0 12px',
+              background: 'rgba(139, 92, 246, 0.15)',
+              color: '#c084fc',
+              border: '1px solid rgba(139, 92, 246, 0.3)',
+              borderRadius: '10px',
+              fontSize: '13px',
+              fontWeight: 500,
+              marginRight: '8px'
+            }}
+          >
+            <HelpCircle size={15} /> Tutorial
+          </button>
           <button className="uv-icon-btn menu-btn" onClick={() => setRightOpen(true)}>
             <SlidersHorizontal size={16} />
           </button>
