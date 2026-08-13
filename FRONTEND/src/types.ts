@@ -57,3 +57,13 @@ export type Agent = { name: string; url: string; description: string };
 export type QualityGateMode = 'auto' | 'pass' | 'fail';
 export type Session = { chatId: string; title: string; updatedAt: string };
 export type Phase = 'IDLE' | 'QUALITY' | 'QUOTE' | 'SETTLE' | 'REDEEM' | 'REDEEMED' | 'ERROR';
+
+// From GET /reputation/:username — see BV_UncZ/router/userReputation.ts and
+// docs/USER-REPUTATION.md. `category` is computed server-side (single
+// source of truth for the score->label mapping) so the frontend never needs
+// its own copy of the thresholds.
+export type Reputation = {
+  username: string;
+  reputation: number;
+  category: { label: string; description: string };
+};

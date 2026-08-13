@@ -2,6 +2,7 @@ import { MongoClient } from 'mongodb';
 import { config } from 'dotenv';
 import path from 'path';
 import type { HistoryDocument } from '../shared/types/history';
+import type { UserDocument } from '../shared/types/user';
 
 const envPath = path.resolve(__dirname, '../.env');
 console.log('Loading .env from:', envPath);
@@ -79,5 +80,5 @@ export async function connectDB() {
 }
 
 export const db = client.db('x402-multi-agent');
-export const usersCollection = db.collection('users');
+export const usersCollection = db.collection<UserDocument>('users');
 export const historyCollection = db.collection<HistoryDocument>('history');

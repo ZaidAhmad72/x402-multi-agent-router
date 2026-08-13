@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import '../index.css';
-import type { Agent, Balance, Message, Phase, QualityGateMode, Session } from '../types';
+import type { Agent, Balance, Message, Phase, QualityGateMode, Reputation, Session } from '../types';
 import { buildRouteSteps } from '../lib/answer';
 import DevView from '../components/dev-view/DevView';
 import UserView from '../components/user-view/UserView';
@@ -30,6 +30,7 @@ export default function ChatApp() {
   const [maxSpend, setMaxSpend] = useState<number>(0.10);
 
   const [balances, setBalances] = useState<Balance[]>([]);
+  const [reputation, setReputation] = useState<Reputation | null>(null);
   const [agents, setAgents] = useState<Agent[]>([]);
   const [qualityMode, setQualityMode] = useState<QualityGateMode>('auto');
 
@@ -65,9 +66,13 @@ export default function ChatApp() {
     if (username) {
       loadSessions(username);
       connectWebSocket(username);
+      fetchReputation(username);
     }
 
-    const interval = setInterval(fetchBalances, 3000);
+    const interval = setInterval(() => {
+      fetchBalances();
+      if (username) fetchReputation(username);
+    }, 3000);
     return () => {
       clearInterval(interval);
       if (wsRef.current) wsRef.current.close();
@@ -174,6 +179,24 @@ export default function ChatApp() {
       await refreshSessions();
     } catch (e) {
       console.error('Failed to save message to history:', e);
+    }
+  };
+
+  // Polled alongside balances (same 3s interval) rather than only fetched
+  // once, because router/userReputation.ts's applyReputationOutcome() is
+  // fire-and-forget on the backend -- it isn't guaranteed to have written by
+  // the time a /route response comes back, so a single fetch right after
+  // sending a message could show the pre-update score. Polling converges on
+  // the true value within a few seconds without needing to coordinate with
+  // the async write.
+  const fetchReputation = async (user: string) => {
+    try {
+      const res = await fetch(`/reputation/${user}`);
+      if (res.ok) {
+        setReputation(await res.json());
+      }
+    } catch (e) {
+      // silent -- same as fetchBalances, a missed poll tick isn't worth surfacing
     }
   };
 
@@ -547,6 +570,7 @@ export default function ChatApp() {
         setMaxSpend={setMaxSpend}
         currentPhase={currentPhase}
         balances={balances}
+        reputation={reputation}
         onHelp={handleHelp}
         onLogout={handleLogout}
         onSwitchToDevView={() => setViewMode('dev')}
@@ -577,6 +601,7 @@ export default function ChatApp() {
       setMaxSpend={setMaxSpend}
       currentPhase={currentPhase}
       balances={balances}
+      reputation={reputation}
       agents={agents}
       agentStatus={agentStatus}
       toggleAgentKill={toggleAgentKill}

@@ -1,7 +1,7 @@
 import { useState, type RefObject } from 'react';
 import { Menu, SlidersHorizontal } from 'lucide-react';
 import './user-view.css';
-import type { Balance, Message, Phase, Session } from '../../types';
+import type { Balance, Message, Phase, Reputation, Session } from '../../types';
 import UserSidebar from './UserSidebar';
 import UserRightPanel from './UserRightPanel';
 import UserMessage from './UserMessage';
@@ -32,6 +32,7 @@ export interface UserViewProps {
 
   currentPhase: Phase;
   balances: Balance[];
+  reputation: Reputation | null;
 
   onHelp: () => void;
   onLogout: () => void;
@@ -54,7 +55,7 @@ export default function UserView(props: UserViewProps) {
     messages, processingLogs, messagesEndRef,
     input, setInput, isListening, interimTranscript, toggleListening,
     handleRouteClick, handlePreviewClick,
-    maxSpend, setMaxSpend, currentPhase, balances,
+    maxSpend, setMaxSpend, currentPhase, balances, reputation,
     onHelp, onLogout, onSwitchToDevView,
   } = props;
 
@@ -79,6 +80,7 @@ export default function UserView(props: UserViewProps) {
         onHelp={onHelp}
         onLogout={onLogout}
         onSwitchToDevView={onSwitchToDevView}
+        reputation={reputation}
       />
 
       <div className="uv-main">

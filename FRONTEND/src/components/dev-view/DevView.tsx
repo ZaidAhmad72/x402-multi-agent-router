@@ -1,6 +1,6 @@
 import { Play, Mic, MicOff, HelpCircle, LogOut, Menu, Plus, MessageSquare, Sparkles } from 'lucide-react';
 import type { RefObject } from 'react';
-import type { Agent, Balance, Message, QualityGateMode, Session } from '../../types';
+import type { Agent, Balance, Message, QualityGateMode, Reputation, Session } from '../../types';
 
 export interface DevViewProps {
   username?: string;
@@ -29,6 +29,7 @@ export interface DevViewProps {
   currentPhase: 'IDLE' | 'QUALITY' | 'QUOTE' | 'SETTLE' | 'REDEEM' | 'REDEEMED' | 'ERROR';
 
   balances: Balance[];
+  reputation: Reputation | null;
 
   agents: Agent[];
   agentStatus: Record<string, 'alive' | 'killed'>;
@@ -61,7 +62,7 @@ export default function DevView(props: DevViewProps) {
     username, isSidebarOpen, setIsSidebarOpen, sessions, chatId, switchSession, startNewChat,
     messages, processingLogs, messagesEndRef,
     input, setInput, isListening, interimTranscript, toggleListening, handleRouteClick, handlePreviewClick,
-    maxSpend, setMaxSpend, currentPhase, balances,
+    maxSpend, setMaxSpend, currentPhase, balances, reputation,
     agents, agentStatus, toggleAgentKill,
     qualityMode, changeQualityMode,
     replayAgent, setReplayAgent, replayN, setReplayN, replayResult, runReplayTest,
@@ -104,6 +105,31 @@ export default function DevView(props: DevViewProps) {
               </div>
             ))}
           </div>
+
+          {reputation && (
+            <div
+              title={reputation.category.description}
+              style={{
+                marginTop: '12px', paddingTop: '12px', borderTop: '1px solid var(--panel-border)',
+                display: 'flex', alignItems: 'baseline', justifyContent: 'space-between',
+              }}
+            >
+              <span style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
+                Reputation: <strong style={{ color: 'var(--text-main)' }}>{reputation.reputation.toFixed(1)}/10</strong>
+              </span>
+              <span
+                className={`badge ${
+                  ['excellent', 'good'].includes(reputation.category.label.toLowerCase())
+                    ? 'success'
+                    : reputation.category.label.toLowerCase() === 'fair'
+                    ? 'warning'
+                    : 'danger'
+                }`}
+              >
+                {reputation.category.label}
+              </span>
+            </div>
+          )}
         </div>
       )}
 

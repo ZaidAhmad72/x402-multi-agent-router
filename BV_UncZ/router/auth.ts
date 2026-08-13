@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { randomBytes, scryptSync, timingSafeEqual } from 'crypto';
 import { usersCollection, isDbConnected } from './db';
+import { REPUTATION_DEFAULT } from './userReputation';
 
 const authApp = new Hono();
 
@@ -51,7 +52,8 @@ authApp.post('/register', async (c) => {
       username,
       name,
       password: hashPassword(password),
-      createdAt: new Date()
+      createdAt: new Date(),
+      reputation: REPUTATION_DEFAULT,
     });
 
     return c.json({ status: 'ok', message: 'Registered successfully', username });

@@ -1,5 +1,5 @@
 import { Plus, MessageSquare, HelpCircle, LogOut, Wrench, Router } from 'lucide-react';
-import type { Session } from '../../types';
+import type { Reputation, Session } from '../../types';
 
 export interface UserSidebarProps {
   open: boolean;
@@ -11,10 +11,11 @@ export interface UserSidebarProps {
   onHelp: () => void;
   onLogout: () => void;
   onSwitchToDevView: () => void;
+  reputation: Reputation | null;
 }
 
 export default function UserSidebar(props: UserSidebarProps) {
-  const { open, onClose, sessions, chatId, switchSession, startNewChat, onHelp, onLogout, onSwitchToDevView } = props;
+  const { open, onClose, sessions, chatId, switchSession, startNewChat, onHelp, onLogout, onSwitchToDevView, reputation } = props;
 
   return (
     <>
@@ -47,6 +48,13 @@ export default function UserSidebar(props: UserSidebarProps) {
             <div style={{ fontSize: 12, color: 'var(--text-muted)', padding: '8px 10px' }}>No chats yet</div>
           )}
         </div>
+
+        {reputation && (
+          <div className={`uv-reputation uv-reputation-${reputation.category.label.toLowerCase()}`} title={reputation.category.description}>
+            <div className="uv-reputation-score">{reputation.reputation.toFixed(1)}<span>/10</span></div>
+            <div className="uv-reputation-label">{reputation.category.label}</div>
+          </div>
+        )}
 
         <div className="uv-sidebar-footer">
           <button className="uv-footer-btn" onClick={onHelp}>
