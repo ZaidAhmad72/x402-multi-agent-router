@@ -31,7 +31,7 @@ import { AGENT_REGISTRY } from '../shared/constants';
 import { connectDB } from './db';
 import { authApp } from './auth';
 import { historyApp } from './history';
-import { Message, ProcessEvent } from '../shared/types/history';
+import { ProcessEvent } from '../shared/types/history';
 
 // Shared env file for all 5 agents + router (GROQ_API_KEY, MONGODB_URI —
 // see BV_UncZ/.env's header comment). Wallet mnemonics stay in

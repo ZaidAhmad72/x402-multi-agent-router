@@ -56,32 +56,6 @@ export default function ChatApp() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, processingLogs]);
 
-  // Frontend-driven history sync
-  useEffect(() => {
-    if (!username || !chatId) return;
-    if (messages.length <= 1) return; // Don't sync just the initial greeting
-
-    const firstUserMsg = messages.find(m => m.sender === 'user');
-    let title = 'New Chat';
-    if (firstUserMsg && firstUserMsg.html) {
-      // Very simple strip of html tags to get text for the title
-      title = firstUserMsg.html.replace(/<[^>]*>?/gm, '').substring(0, 50);
-    } else if (firstUserMsg && firstUserMsg.text) {
-      title = firstUserMsg.text.substring(0, 50);
-    }
-
-    fetch('/history/update', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        username,
-        chatId,
-        title,
-        messages
-      })
-    }).catch(console.error);
-  }, [messages, chatId, username]);
-
   // Initial loads and WS connect
   useEffect(() => {
     fetchAgents();
@@ -135,46 +109,71 @@ export default function ChatApp() {
     }
   };
 
+  // Refreshes only the session list (sidebar), never touches `messages` or
+  // `chatId` -- unlike loadSessions, which also jumps to and reloads the
+  // latest chat's full message history. Called after every history append
+  // so the sidebar's title/ordering reflects the DB immediately, in both
+  // DevView and UserView (both render from this same `sessions` state),
+  // without disturbing whatever's currently on screen mid-conversation.
+  const refreshSessions = async () => {
+    if (!username) return;
+    try {
+      const res = await fetch(`/history/sessions/${username}`);
+      if (res.ok) {
+        const data = await res.json();
+        setSessions(data.sessions || []);
+      }
+    } catch (e) {
+      console.error('Failed to refresh session list:', e);
+    }
+  };
+
   const loadHistory = async (user: string, cId: string) => {
     try {
       const res = await fetch(`/history/chat/${user}/${cId}`);
       if (res.ok) {
         const data = await res.json();
+        // The backend now stores/returns this Message[] verbatim (see
+        // router/history.ts) -- it used to be reconstructed from a
+        // `sections`-shaped format the backend never actually wrote,
+        // silently failing to restore anything (hMsg.sections was always
+        // undefined). Loading it directly also means raw/steps survive a
+        // reload, so DevView/UserView render the same as they did live.
         if (data.history && data.history.length > 0) {
-          const loadedMessages = data.history.map((hMsg: any) => {
-            let html = '';
-            hMsg.sections.forEach((sec: any) => {
-              if (sec.type === 'text') {
-                // simple markdown-ish parsing for bold and bullet points
-                let text = sec.content
-                  .replace(/\n/g, '<br/>')
-                  .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-                  .replace(/- (.*?)<br\/>/g, '<li>$1</li>');
-                html += `<div>${text}</div>`;
-              } else if (sec.type === 'process') {
-                html += `<div class="receipt-box" style="margin-bottom:12px;">
-                  <h4 style="color:var(--text-muted);margin-bottom:8px;font-size:12px;text-transform:uppercase;">Process Trace</h4>`;
-                sec.events.forEach((evt: any) => {
-                  html += `<div style="font-size:11px;color:var(--success);">✓ ${evt.description}</div>`;
-                });
-                html += `</div>`;
-              } else if (sec.type === 'chat-element' && sec.element === 'hr') {
-                html += `<hr style="border-color: rgba(255,255,255,0.1); margin: 12px 0;" />`;
-              }
-            });
-            return {
-              id: Date.now().toString() + Math.random(),
-              sender: hMsg.sender,
-              html
-            };
-          });
-          setMessages([initialGreeting, ...loadedMessages]);
+          setMessages([initialGreeting, ...(data.history as Message[])]);
         } else {
           setMessages([initialGreeting]);
         }
       }
     } catch (e) {
       console.error(e);
+    }
+  };
+
+  // Appends exactly one message to the DB, then reloads just the sidebar's
+  // session list from the server (title/ordering) -- not local `messages`
+  // (already updated synchronously by addMessage) and not a full
+  // loadSessions (which would also jump to and reload the latest chat's
+  // messages, disturbing whatever's on screen). Called at the two moments a
+  // message is actually final: right when the user sends (see
+  // handleRouteClick/handlePreviewClick) and right when agent processing
+  // finishes, success or failure (see executeRoute/executePreview).
+  const appendToHistory = async (message: Message, title?: string) => {
+    if (!username || !chatId) return;
+    try {
+      const res = await fetch('/history/append', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, chatId, title, message })
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        console.error('Failed to save message to history:', data.error || `HTTP ${res.status}`);
+        return;
+      }
+      await refreshSessions();
+    } catch (e) {
+      console.error('Failed to save message to history:', e);
     }
   };
 
@@ -250,8 +249,10 @@ export default function ChatApp() {
     }
   };
 
-  const addMessage = (msg: Omit<Message, 'id'>) => {
-    setMessages(prev => [...prev, { ...msg, id: Date.now().toString() + Math.random() }]);
+  const addMessage = (msg: Omit<Message, 'id'>): Message => {
+    const full: Message = { ...msg, id: Date.now().toString() + Math.random() };
+    setMessages(prev => [...prev, full]);
+    return full;
   };
 
   // Route/Preview used to ask for confirmation in a second chat message
@@ -264,7 +265,9 @@ export default function ChatApp() {
   const handleRouteClick = () => {
     if (!input.trim()) return;
     const task = input.trim();
-    addMessage({ sender: 'user', text: task });
+    const isFirstUserMessage = !messages.some(m => m.sender === 'user');
+    const userMsg = addMessage({ sender: 'user', text: task });
+    appendToHistory(userMsg, isFirstUserMessage ? task.substring(0, 50) : undefined);
     setProcessingLogs([]);
     setInput('');
     executeRoute(task, maxSpend);
@@ -273,7 +276,9 @@ export default function ChatApp() {
   const handlePreviewClick = () => {
     if (!input.trim()) return;
     const task = input.trim();
-    addMessage({ sender: 'user', text: task });
+    const isFirstUserMessage = !messages.some(m => m.sender === 'user');
+    const userMsg = addMessage({ sender: 'user', text: task });
+    appendToHistory(userMsg, isFirstUserMessage ? task.substring(0, 50) : undefined);
     setProcessingLogs([]);
     setInput('');
     executePreview(task);
@@ -294,7 +299,7 @@ export default function ChatApp() {
       setMessages(prev => prev.filter(m => m.id !== thinkingId));
 
       if (!res.ok) {
-        addMessage({ sender: 'system', html: `<div class="badge danger">Preview Failed: ${data.error}</div>` });
+        appendToHistory(addMessage({ sender: 'system', html: `<div class="badge danger">Preview Failed: ${data.error}</div>` }));
         return;
       }
 
@@ -316,11 +321,11 @@ export default function ChatApp() {
       }
       const steps = buildRouteSteps(data, [], true);
       setProcessingLogs([]);
-      addMessage({ sender: 'agent', html: resultHtml, raw: data, steps, isPreview: true });
+      appendToHistory(addMessage({ sender: 'agent', html: resultHtml, raw: data, steps, isPreview: true }));
     } catch (e: any) {
       setProcessingLogs([]);
       setMessages(prev => prev.filter(m => m.id !== thinkingId));
-      addMessage({ sender: 'system', html: `<div class="badge danger">Error: ${e.message}</div>` });
+      appendToHistory(addMessage({ sender: 'system', html: `<div class="badge danger">Error: ${e.message}</div>` }));
     }
   };
 
@@ -435,17 +440,16 @@ export default function ChatApp() {
 
       const steps = buildRouteSteps(data, processingLogs, false);
       setProcessingLogs([]);
-      addMessage({ sender: 'agent', html: resultHtml, raw: data, steps });
-
-      if (username) {
-        loadSessions(username);
-      }
+      // Covers both outcomes -- data.error above builds a failure-styled
+      // resultHtml but falls through to this same append, it doesn't
+      // return early, so pass and fail both get saved here.
+      appendToHistory(addMessage({ sender: 'agent', html: resultHtml, raw: data, steps }));
     } catch (err: any) {
       const errMsg = err.message || String(err);
       setMessages(prev => prev.filter(m => m.id !== thinkingId));
       setCurrentPhase('ERROR');
       setProcessingLogs([]);
-      addMessage({ sender: 'system', html: `<div class="badge danger">Failed to connect to router: ${errMsg}</div>` });
+      appendToHistory(addMessage({ sender: 'system', html: `<div class="badge danger">Failed to connect to router: ${errMsg}</div>` }));
     }
   };
 

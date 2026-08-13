@@ -4,7 +4,9 @@
   "private": true,
   "main": "index.ts",
   "scripts": {
+    "prestart": "node ../../scripts/free-port.mjs 4001",
     "start": "tsx index.ts",
+    "predev": "node ../../scripts/free-port.mjs 4001",
     "dev": "tsx watch index.ts"
   },
   "dependencies": {

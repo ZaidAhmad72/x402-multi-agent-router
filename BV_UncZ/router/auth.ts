@@ -1,8 +1,18 @@
 import { Hono } from 'hono';
 import { randomBytes, scryptSync, timingSafeEqual } from 'crypto';
-import { usersCollection } from './db';
+import { usersCollection, isDbConnected } from './db';
 
 const authApp = new Hono();
+
+const DB_UNAVAILABLE_MESSAGE =
+  'Database unavailable -- registration/login is down (MongoDB never connected on startup; check the router logs for why).';
+
+authApp.use('*', async (c, next) => {
+  if (!isDbConnected()) {
+    return c.json({ error: DB_UNAVAILABLE_MESSAGE }, 503);
+  }
+  await next();
+});
 
 // Salted scrypt hash, no extra dependency (Node's built-in crypto). Was
 // storing plaintext passwords -- fine for nobody, this is a shared testnet

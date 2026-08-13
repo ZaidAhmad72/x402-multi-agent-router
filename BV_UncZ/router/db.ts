@@ -1,6 +1,7 @@
 import { MongoClient } from 'mongodb';
 import { config } from 'dotenv';
 import path from 'path';
+import type { HistoryDocument } from '../shared/types/history';
 
 const envPath = path.resolve(__dirname, '../.env');
 console.log('Loading .env from:', envPath);
@@ -26,16 +27,57 @@ if (!uri) {
 
 const client = new MongoClient(uri || 'mongodb://localhost:27017');
 
+// Tracked explicitly rather than inferred from a try/catch around each query
+// -- a failed/never-attempted connect() leaves the driver's topology closed,
+// and every collection call against it throws the same cryptic
+// "MongoNotConnectedError: topology is closed" regardless of what actually
+// went wrong (bad URI, network/TLS failure, Atlas IP allowlist, etc). Routes
+// check this flag first and return one clear, actionable error instead of
+// that driver-internal message reaching the UI.
+let connected = false;
+
+export function isDbConnected(): boolean {
+  return connected;
+}
+
 export async function connectDB() {
   if (!uri) return;
   try {
     await client.connect();
+    connected = true;
     console.log("Connected to MongoDB");
   } catch (err) {
+    connected = false;
     console.error("Failed to connect to MongoDB -- chat history/auth will be unavailable:", err);
+    return;
+  }
+
+  // One history document per user (see shared/types/history.ts) -- this
+  // index makes that a hard constraint at the DB level, not just a
+  // convention `history.ts`'s update logic happens to follow, so a bug or a
+  // concurrent write can't silently fork a second document for the same
+  // username the way the old one-document-per-chat design used to.
+  //
+  // Deliberately a separate try/catch from the connect() above: this can
+  // fail on pre-existing duplicate `username` documents (e.g. leftover data
+  // from before this schema existed) even though the connection itself is
+  // completely fine. That must not flip `connected` back to false and take
+  // down history/auth over an indexing detail -- everything still works
+  // without the index, it just stops being a hard constraint until the
+  // duplicates are cleaned up and the server is restarted.
+  try {
+    await historyCollection.createIndex({ username: 1 }, { unique: true });
+    await usersCollection.createIndex({ username: 1 }, { unique: true });
+  } catch (err) {
+    console.warn(
+      "Could not create unique username index -- likely pre-existing duplicate username " +
+      "documents from before this schema. History/auth still work; duplicates just aren't " +
+      "rejected at the DB level until the existing ones are removed and the router restarts:",
+      err
+    );
   }
 }
 
 export const db = client.db('x402-multi-agent');
 export const usersCollection = db.collection('users');
-export const historyCollection = db.collection('history');
+export const historyCollection = db.collection<HistoryDocument>('history');
