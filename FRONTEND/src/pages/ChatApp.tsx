@@ -60,6 +60,15 @@ export default function ChatApp() {
 
   const wsRef = useRef<WebSocket | null>(null);
 
+  const getAuthHeaders = (): Record<string, string> => {
+    const token = localStorage.getItem('auth_token');
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+    return headers;
+  };
+
   // Auto-scroll chat
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -301,7 +310,7 @@ export default function ChatApp() {
     try {
       const res = await fetch('/debug/preview', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getAuthHeaders(),
         body: JSON.stringify({ task })
       });
       const data = await res.json();
@@ -347,7 +356,7 @@ export default function ChatApp() {
     try {
       const res = await fetch('/route', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getAuthHeaders(),
         body: JSON.stringify({ task, maxSpend, username, chatId })
       });
 

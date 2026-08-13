@@ -44,6 +44,9 @@ export default function Landing() {
       }
 
       localStorage.setItem('session_user', username);
+      if (data.token) {
+        localStorage.setItem('auth_token', data.token);
+      }
       const accs = new Set(savedAccounts);
       accs.add(username);
       const newAccs = Array.from(accs);
