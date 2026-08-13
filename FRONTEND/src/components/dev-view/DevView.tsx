@@ -126,8 +126,8 @@ export default function DevView(props: DevViewProps) {
             >
               <Sparkles size={16} /> User View
             </button>
-            <button className="btn" onClick={onHelp} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <HelpCircle size={16} /> Help
+            <button className="btn" onClick={onHelp} style={{ display: 'flex', alignItems: 'center', gap: '6px', background: 'rgba(139, 92, 246, 0.15)', color: '#c084fc', borderColor: 'rgba(139, 92, 246, 0.4)' }}>
+              <HelpCircle size={16} /> Tutorial
             </button>
             <button className="btn" onClick={onLogout} style={{ display: 'flex', alignItems: 'center', gap: '6px', background: 'rgba(239, 68, 68, 0.1)', color: 'var(--danger)', borderColor: 'var(--danger)' }}>
               <LogOut size={16} /> Logout

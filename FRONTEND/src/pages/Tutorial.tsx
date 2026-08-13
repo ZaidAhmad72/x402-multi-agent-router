@@ -1,25 +1,68 @@
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Wallet, MessageSquare, Zap, User } from 'lucide-react';
+import { ArrowLeft, Wallet, MessageSquare, Zap, User, ShieldCheck, Sparkles, Play } from 'lucide-react';
 import '../index.css';
+import TutorialModal from '../components/TutorialModal';
 
 export default function Tutorial() {
   const navigate = useNavigate();
+  const [isModalOpen, setIsModalOpen] = useState(false);
+
+  const handleLaunchChat = () => {
+    const user = localStorage.getItem('session_user') || 'demo';
+    navigate(`/user/${user}`);
+  };
 
   return (
-    <div className="tutorial-container" style={{ padding: '40px', maxWidth: '800px', margin: '0 auto' }}>
-      <button 
-        className="btn" 
-        onClick={() => navigate(-1)} 
-        style={{ marginBottom: '30px', display: 'inline-flex', alignItems: 'center' }}
-      >
-        <ArrowLeft size={16} style={{ marginRight: '6px' }} />
-        Back
-      </button>
+    <div className="tutorial-container" style={{ padding: '40px 24px', maxWidth: '860px', margin: '0 auto' }}>
+      <TutorialModal
+        isOpen={isModalOpen}
+        onClose={() => setIsModalOpen(false)}
+        onSelectExampleTask={() => handleLaunchChat()}
+      />
 
-      <h1 style={{ fontSize: '36px', marginBottom: '16px' }}>How to use the Router</h1>
-      <p style={{ color: 'var(--text-muted)', fontSize: '16px', marginBottom: '40px' }}>
-        Learn how to orchestrate multiple agents and manage your balance.
-      </p>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '30px' }}>
+        <button
+          className="btn"
+          onClick={() => navigate(-1)}
+          style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+        >
+          <ArrowLeft size={16} />
+          Back
+        </button>
+
+        <div style={{ display: 'flex', gap: '12px' }}>
+          <button
+            className="btn"
+            onClick={() => setIsModalOpen(true)}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              background: 'rgba(139, 92, 246, 0.15)',
+              color: '#c084fc',
+              borderColor: 'rgba(139, 92, 246, 0.4)'
+            }}
+          >
+            <Sparkles size={16} /> Open Interactive Modal
+          </button>
+          <button
+            className="btn primary"
+            onClick={handleLaunchChat}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+          >
+            <Play size={16} /> Go to Router Workspace
+          </button>
+        </div>
+      </div>
+
+      <div style={{ marginBottom: '40px' }}>
+        <span className="badge primary" style={{ marginBottom: '12px', display: 'inline-block' }}>User Documentation</span>
+        <h1 style={{ fontSize: '36px', marginBottom: '12px' }}>Atomic Multi-Agent Service Router Tutorial</h1>
+        <p style={{ color: 'var(--text-muted)', fontSize: '16px', lineHeight: '1.6' }}>
+          Learn how to orchestrate specialized AI agents (Weather, Research, Analysis, Writer, Formatter) with automated quality gates and Algorand TestNet atomic settlements.
+        </p>
+      </div>
 
       <div className="tutorial-steps">
         <div className="glass-panel" style={{ padding: '24px', marginBottom: '24px' }}>
@@ -27,11 +70,11 @@ export default function Tutorial() {
             <div style={{ background: 'var(--primary)', color: 'white', width: '32px', height: '32px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', marginRight: '16px' }}>1</div>
             <h2 style={{ margin: 0, display: 'flex', alignItems: 'center' }}>
               <User size={20} style={{ marginRight: '8px', color: 'var(--primary)' }} />
-              Register & Login
+              Register & Workspace Login
             </h2>
           </div>
-          <p style={{ color: 'var(--text-muted)', marginLeft: '48px' }}>
-            Start by creating an account on the landing page. Once registered, login to access your personalized workspace where tasks are routed.
+          <p style={{ color: 'var(--text-muted)', marginLeft: '48px', lineHeight: '1.6' }}>
+            Start by entering a username on the login screen. Once logged in, your workspace stores your chat sessions, custom task routes, and live wallet state.
           </p>
         </div>
 
@@ -40,11 +83,11 @@ export default function Tutorial() {
             <div style={{ background: 'var(--primary)', color: 'white', width: '32px', height: '32px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', marginRight: '16px' }}>2</div>
             <h2 style={{ margin: 0, display: 'flex', alignItems: 'center' }}>
               <Wallet size={20} style={{ marginRight: '8px', color: 'var(--primary)' }} />
-              Add Money to Wallet
+              Algorand TestNet Wallet & Max Spend Limit
             </h2>
           </div>
-          <p style={{ color: 'var(--text-muted)', marginLeft: '48px' }}>
-            The router requires USDC on the Algorand TestNet. Before dispatching tasks that require payments, ensure your connected wallet has a sufficient budget.
+          <p style={{ color: 'var(--text-muted)', marginLeft: '48px', lineHeight: '1.6' }}>
+            The router requires USDC funds on Algorand TestNet. Set a budget limit with the <strong>Max Spend ($)</strong> field (default $0.10). If agent quotes exceed your budget cap, routing aborts safely.
           </p>
         </div>
 
@@ -53,11 +96,24 @@ export default function Tutorial() {
             <div style={{ background: 'var(--primary)', color: 'white', width: '32px', height: '32px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', marginRight: '16px' }}>3</div>
             <h2 style={{ margin: 0, display: 'flex', alignItems: 'center' }}>
               <MessageSquare size={20} style={{ marginRight: '8px', color: 'var(--primary)' }} />
-              Ask Something in Chat
+              Submit Tasks & Voice Dictation
             </h2>
           </div>
-          <p style={{ color: 'var(--text-muted)', marginLeft: '48px' }}>
-            Enter your task in the chat input. The system will process your request and route it through our specialized AI agents. You can even use voice-to-text to dictate your task!
+          <p style={{ color: 'var(--text-muted)', marginLeft: '48px', lineHeight: '1.6' }}>
+            Enter your task in the chat input or use the <strong>Voice Speech-to-Text Microphone</strong> to dictate your prompt. The router dynamically analyzes the prompt and picks the best agents to execute it.
+          </p>
+        </div>
+
+        <div className="glass-panel" style={{ padding: '24px', marginBottom: '24px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', marginBottom: '16px' }}>
+            <div style={{ background: 'var(--primary)', color: 'white', width: '32px', height: '32px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', marginRight: '16px' }}>4</div>
+            <h2 style={{ margin: 0, display: 'flex', alignItems: 'center' }}>
+              <ShieldCheck size={20} style={{ marginRight: '8px', color: 'var(--primary)' }} />
+              Automated Quality Gates & Replay Protection
+            </h2>
+          </div>
+          <p style={{ color: 'var(--text-muted)', marginLeft: '48px', lineHeight: '1.6' }}>
+            Before payment settlement, automated quality gates verify agent outputs. Replay attack protection rejects duplicate submissions (HTTP 409 guard), ensuring only valid outputs are rewarded.
           </p>
         </div>
       </div>
@@ -67,22 +123,22 @@ export default function Tutorial() {
           <Zap size={20} style={{ marginRight: '8px', color: 'var(--warning)' }} />
           Billing Rules: What Deducts Balance?
         </h3>
-        
+
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
           <div>
             <h4 style={{ color: 'var(--success)', marginBottom: '8px' }}>Deducts Balance</h4>
             <ul style={{ color: 'var(--text-muted)', paddingLeft: '20px' }}>
               <li style={{ marginBottom: '8px' }}>Executing a "Route (Live Payment)" task.</li>
-              <li style={{ marginBottom: '8px' }}>Successfully settling a quote with agents (the transaction group completes).</li>
+              <li style={{ marginBottom: '8px' }}>Successfully settling quotes with agents (the transaction group completes).</li>
             </ul>
           </div>
-          
+
           <div>
             <h4 style={{ color: 'var(--success)', marginBottom: '8px' }}>Does NOT Deduct Balance</h4>
             <ul style={{ color: 'var(--text-muted)', paddingLeft: '20px' }}>
-              <li style={{ marginBottom: '8px' }}>Using the "Preview (no payment)" feature.</li>
-              <li style={{ marginBottom: '8px' }}>If any agent fails during the QUOTE phase (liveness check fails).</li>
-              <li style={{ marginBottom: '8px' }}>If the total quote exceeds your specified Maximum Spend budget.</li>
+              <li style={{ marginBottom: '8px' }}>Using the "Preview (no payment)" feature ($0.00).</li>
+              <li style={{ marginBottom: '8px' }}>If any agent fails during quality check or liveness check.</li>
+              <li style={{ marginBottom: '8px' }}>If total quote exceeds your specified Max Spend limit.</li>
             </ul>
           </div>
         </div>

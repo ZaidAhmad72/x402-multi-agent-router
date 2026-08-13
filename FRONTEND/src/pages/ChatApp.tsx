@@ -5,12 +5,21 @@ import type { Agent, Balance, Message, Phase, QualityGateMode, Session } from '.
 import { buildRouteSteps } from '../lib/answer';
 import DevView from '../components/dev-view/DevView';
 import UserView from '../components/user-view/UserView';
+import TutorialModal from '../components/TutorialModal';
 
 export default function ChatApp() {
   const navigate = useNavigate();
   const { username } = useParams();
 
   const [viewMode, setViewMode] = useState<'dev' | 'user'>('dev');
+  const [isTutorialOpen, setIsTutorialOpen] = useState(false);
+
+  useEffect(() => {
+    const hasSeen = localStorage.getItem('has_seen_tutorial');
+    if (!hasSeen) {
+      setIsTutorialOpen(true);
+    }
+  }, []);
 
   const [sessions, setSessions] = useState<Session[]>([]);
   const [chatId, setChatId] = useState<string>(Date.now().toString());
@@ -523,74 +532,82 @@ export default function ChatApp() {
     setIsSidebarOpen(false);
   };
 
-  const handleHelp = () => navigate('/tutorial');
-
-  if (viewMode === 'user') {
-    return (
-      <UserView
-        username={username}
-        sessions={sessions}
-        chatId={chatId}
-        switchSession={switchSession}
-        startNewChat={startNewChat}
-        messages={messages}
-        processingLogs={processingLogs}
-        messagesEndRef={messagesEndRef}
-        input={input}
-        setInput={setInput}
-        isListening={isListening}
-        interimTranscript={interimTranscript}
-        toggleListening={toggleListening}
-        handleRouteClick={handleRouteClick}
-        handlePreviewClick={handlePreviewClick}
-        maxSpend={maxSpend}
-        setMaxSpend={setMaxSpend}
-        currentPhase={currentPhase}
-        balances={balances}
-        onHelp={handleHelp}
-        onLogout={handleLogout}
-        onSwitchToDevView={() => setViewMode('dev')}
-      />
-    );
-  }
+  const handleHelp = () => setIsTutorialOpen(true);
 
   return (
-    <DevView
-      username={username}
-      isSidebarOpen={isSidebarOpen}
-      setIsSidebarOpen={setIsSidebarOpen}
-      sessions={sessions}
-      chatId={chatId}
-      switchSession={switchSession}
-      startNewChat={startNewChat}
-      messages={messages}
-      processingLogs={processingLogs}
-      messagesEndRef={messagesEndRef}
-      input={input}
-      setInput={setInput}
-      isListening={isListening}
-      interimTranscript={interimTranscript}
-      toggleListening={toggleListening}
-      handleRouteClick={handleRouteClick}
-      handlePreviewClick={handlePreviewClick}
-      maxSpend={maxSpend}
-      setMaxSpend={setMaxSpend}
-      currentPhase={currentPhase}
-      balances={balances}
-      agents={agents}
-      agentStatus={agentStatus}
-      toggleAgentKill={toggleAgentKill}
-      qualityMode={qualityMode}
-      changeQualityMode={changeQualityMode}
-      replayAgent={replayAgent}
-      setReplayAgent={setReplayAgent}
-      replayN={replayN}
-      setReplayN={setReplayN}
-      replayResult={replayResult}
-      runReplayTest={runReplayTest}
-      onHelp={handleHelp}
-      onLogout={handleLogout}
-      onSwitchToUserView={() => setViewMode('user')}
-    />
+    <>
+      <TutorialModal
+        isOpen={isTutorialOpen}
+        onClose={() => setIsTutorialOpen(false)}
+        onSelectExampleTask={(task) => {
+          setInput(task);
+          setIsTutorialOpen(false);
+        }}
+      />
+      {viewMode === 'user' ? (
+        <UserView
+          username={username}
+          sessions={sessions}
+          chatId={chatId}
+          switchSession={switchSession}
+          startNewChat={startNewChat}
+          messages={messages}
+          processingLogs={processingLogs}
+          messagesEndRef={messagesEndRef}
+          input={input}
+          setInput={setInput}
+          isListening={isListening}
+          interimTranscript={interimTranscript}
+          toggleListening={toggleListening}
+          handleRouteClick={handleRouteClick}
+          handlePreviewClick={handlePreviewClick}
+          maxSpend={maxSpend}
+          setMaxSpend={setMaxSpend}
+          currentPhase={currentPhase}
+          balances={balances}
+          onHelp={handleHelp}
+          onLogout={handleLogout}
+          onSwitchToDevView={() => setViewMode('dev')}
+        />
+      ) : (
+        <DevView
+          username={username}
+          isSidebarOpen={isSidebarOpen}
+          setIsSidebarOpen={setIsSidebarOpen}
+          sessions={sessions}
+          chatId={chatId}
+          switchSession={switchSession}
+          startNewChat={startNewChat}
+          messages={messages}
+          processingLogs={processingLogs}
+          messagesEndRef={messagesEndRef}
+          input={input}
+          setInput={setInput}
+          isListening={isListening}
+          interimTranscript={interimTranscript}
+          toggleListening={toggleListening}
+          handleRouteClick={handleRouteClick}
+          handlePreviewClick={handlePreviewClick}
+          maxSpend={maxSpend}
+          setMaxSpend={setMaxSpend}
+          currentPhase={currentPhase}
+          balances={balances}
+          agents={agents}
+          agentStatus={agentStatus}
+          toggleAgentKill={toggleAgentKill}
+          qualityMode={qualityMode}
+          changeQualityMode={changeQualityMode}
+          replayAgent={replayAgent}
+          setReplayAgent={setReplayAgent}
+          replayN={replayN}
+          setReplayN={setReplayN}
+          replayResult={replayResult}
+          runReplayTest={runReplayTest}
+          onHelp={handleHelp}
+          onLogout={handleLogout}
+          onSwitchToUserView={() => setViewMode('user')}
+        />
+      )}
+    </>
   );
 }
