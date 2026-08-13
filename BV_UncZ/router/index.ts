@@ -26,6 +26,19 @@ import {
   type QualityGateMode,
 } from './qualityGate';
 import { selfTestReplay } from './selfTestReplay';
+import { buildPlan } from './plan';
+import {
+  usageKey,
+  checkUsage,
+  recordFreeRun,
+  recordSettled,
+  recordAborted,
+  recordRebate,
+  allUsage,
+  setGuardEnabled,
+  isGuardEnabled,
+  resetUsage,
+} from './reputation';
 import { AGENT_REGISTRY } from '../shared/constants';
 
 import { connectDB } from './db';
@@ -171,18 +184,59 @@ app.post('/route', async (c) => {
   }
   sendProgress(username, "Success: Input validation passed", processEvents);
 
+  // GUARD — pseudonymous per-user rate limit, before any free agent work.
+  // See router/reputation.ts for the identity/privacy tradeoffs.
+  const guardKey = usageKey(userAddr, c.req.header('x-session-id'));
+  const guardVerdict = checkUsage(guardKey);
+  if (!guardVerdict.allowed) {
+    console.error(`✗ GUARD blocked ${guardKey}: ${guardVerdict.reason}`);
+    sendProgress(username, `Error: ${guardVerdict.reason}`, processEvents);
+    return c.json({ error: guardVerdict.reason, phase: 'GUARD', zeroSpend: true, usage: guardVerdict }, 429);
+  }
+
   sendProgress(username, "Selecting agents for task...", processEvents);
   const registry = await selectAgents(task);
   sendProgress(username, `Success: ${registry.length} agent(s) selected for task execution`, processEvents);
 
+  // PLAN — deterministic execution DAG derived from the already-selected
+  // registry. No network call, no LLM: zero added latency, zero new failure
+  // point in the hot path. Forecasts the transaction-slot cost of this exact
+  // group *before* anything is quoted or signed — an earlier, advisory
+  // sibling of the authoritative gate in settle.ts, not a replacement for it.
+  const plan = buildPlan(task, registry);
+  console.log(
+    `PLAN — ${plan.shape.agentCount} agents, ${plan.shape.layerCount} layers, ` +
+      `max parallel width ${plan.shape.maxParallelWidth}, ` +
+      `group forecast ${plan.groupForecast.total}/${plan.groupForecast.limit}`
+  );
+  if (!plan.groupForecast.withinLimit) {
+    const message =
+      `Plan needs ${plan.groupForecast.total} transactions, exceeding Algorand's 16-transaction atomic ` +
+      'group limit. Nothing was quoted or signed. Beyond 16 the atomicity guarantee would have to hold ' +
+      'per chunk rather than globally — see future scope.';
+    console.error(`✗ ${message}`);
+    sendProgress(username, `Error: ${message}`, processEvents);
+    return c.json({ error: message, phase: 'PLAN', zeroSpend: true, plan }, 400);
+  }
+
+  // QUALITY — trial-run every selected agent for free, before anyone is
+  // asked for a price. A failing agent with a configured stake (stake.ts)
+  // gets slashed instead of paid, decided later in SETTLE; a failing agent
+  // with no stake has no financial accountability to fall back on, so it
+  // aborts the whole route here, same as before stake+slash existed.
   sendProgress(username, "Running quality gate check on selected agents...", processEvents);
   const qualityVerdicts = await runQualityGate(task, registry);
+  recordFreeRun(guardKey, registry.length);
   const unstakedFailures = qualityVerdicts.filter((v) => !v.ok && !v.staked);
   if (unstakedFailures.length > 0) {
     const message = `Quality gate rejected ${unstakedFailures.length} agent output(s) before any payment`;
     console.error(`✗ ${message}`);
     sendProgress(username, `Error: ${message}`, processEvents);
-    return c.json({ error: message, phase: 'QUALITY', zeroSpend: true, qualityVerdicts }, 502);
+    recordAborted(guardKey);
+    return c.json(
+      { error: message, phase: 'QUALITY', zeroSpend: true, qualityVerdicts, plan, usage: checkUsage(guardKey) },
+      502
+    );
   }
 
   sendProgress(username, "Success: Quality gate passed successfully", processEvents);
@@ -196,14 +250,22 @@ app.post('/route', async (c) => {
     if (error instanceof LivenessError) {
       console.error(`✗ ${error.message}`);
       sendProgress(username, `Error: ${error.message}`, processEvents);
-      return c.json({ error: error.message, phase: 'QUOTE', zeroSpend: true, qualityVerdicts }, 502);
+      recordAborted(guardKey);
+      return c.json(
+        { error: error.message, phase: 'QUOTE', zeroSpend: true, qualityVerdicts, plan, usage: checkUsage(guardKey) },
+        502
+      );
     }
     console.error('Unexpected error in QUOTE phase:', error);
     if (isNetworkConnectivityError(error)) {
       sendProgress(username, `Error: Network connectivity issues`, processEvents);
-      return c.json({ error: NETWORK_ERROR_MESSAGE, phase: 'QUOTE', zeroSpend: true, qualityVerdicts }, 502);
+      recordAborted(guardKey);
+      return c.json(
+        { error: NETWORK_ERROR_MESSAGE, phase: 'QUOTE', zeroSpend: true, qualityVerdicts, plan, usage: checkUsage(guardKey) },
+        502
+      );
     }
-    return c.json({ error: 'Internal server error' }, 500);
+    return c.json({ error: 'Internal server error', plan }, 500);
   }
 
   sendProgress(username, "Building atomic transaction group for settlement...", processEvents);
@@ -215,26 +277,60 @@ app.post('/route', async (c) => {
     if (error instanceof BudgetExceededError || error instanceof GroupTooLargeError) {
       console.error(`✗ ${error.message}`);
       sendProgress(username, `Error: ${error.message}`, processEvents);
-      return c.json({ error: error.message, phase: 'QUOTE', zeroSpend: true, qualityVerdicts }, 400);
+      recordAborted(guardKey);
+      return c.json(
+        { error: error.message, phase: 'QUOTE', zeroSpend: true, qualityVerdicts, plan, usage: checkUsage(guardKey) },
+        400
+      );
     }
     console.error('Unexpected error in SETTLE phase:', error);
     const message = error instanceof Error ? error.message : String(error);
     if (message.includes('underflow on subtracting')) {
-      return c.json({
-        error: 'Settlement failed: not enough testnet USDC. Nothing was spent.',
-        phase: 'QUOTE', zeroSpend: true, qualityVerdicts
-      }, 502);
+      sendProgress(username, `Error: insufficient testnet USDC`, processEvents);
+      recordAborted(guardKey);
+      return c.json(
+        {
+          error:
+            'Settlement failed: the router wallet (ROUTER_ADDR) — or a stake wallet, if a slash is pending — ' +
+            'does not have enough testnet USDC. Fund it and retry — nothing was spent.',
+          phase: 'QUOTE',
+          zeroSpend: true,
+          qualityVerdicts,
+          plan,
+          usage: checkUsage(guardKey),
+        },
+        502
+      );
     }
     if (message.includes('must optin')) {
-      return c.json({
-        error: 'Settlement failed: an agent wallet is not opted into USDC. Nothing was spent.',
-        phase: 'QUOTE', zeroSpend: true, qualityVerdicts
-      }, 502);
+      const addrMatch = message.match(/missing from (\S+)/);
+      sendProgress(username, `Error: an agent wallet is not opted into USDC`, processEvents);
+      recordAborted(guardKey);
+      return c.json(
+        {
+          error:
+            'Settlement failed: an agent wallet' +
+            (addrMatch ? ` (${addrMatch[1]})` : '') +
+            ' is not opted into the USDC ASA (10458941) yet — it cannot receive a payment until it opts in. ' +
+            'Nothing was spent.',
+          phase: 'QUOTE',
+          zeroSpend: true,
+          qualityVerdicts,
+          plan,
+          usage: checkUsage(guardKey),
+        },
+        502
+      );
     }
     if (isNetworkConnectivityError(error)) {
-      return c.json({ error: NETWORK_ERROR_MESSAGE, phase: 'QUOTE', zeroSpend: true, qualityVerdicts }, 502);
+      sendProgress(username, `Error: Network connectivity issues`, processEvents);
+      recordAborted(guardKey);
+      return c.json(
+        { error: NETWORK_ERROR_MESSAGE, phase: 'QUOTE', zeroSpend: true, qualityVerdicts, plan, usage: checkUsage(guardKey) },
+        502
+      );
     }
-    return c.json({ error: 'Internal server error' }, 500);
+    return c.json({ error: 'Internal server error', plan }, 500);
   }
 
   sendProgress(username, "Redeeming and verifying results on-chain...", processEvents);
@@ -253,6 +349,11 @@ app.post('/route', async (c) => {
 
     sendProgress(username, "Task completed successfully", processEvents);
 
+    recordSettled(guardKey);
+    if (settlement.perAgent.some((p) => p.outcome === 'slashed')) {
+      recordRebate(guardKey);
+    }
+
     // Return Response
     return c.json({
       phase: 'REDEEMED',
@@ -260,29 +361,54 @@ app.post('/route', async (c) => {
       quotes: quotePhase.quotes,
       totalUsd: quotePhase.totalUsd,
       totalMicroUsdc: quotePhase.totalMicroUsdc,
-      qualityVerdicts, settlement, receipt, result,
+      qualityVerdicts,
+      plan,
+      settlement,
+      receipt,
+      result,
+      usage: checkUsage(guardKey),
     });
   } catch (error) {
     const message = error instanceof RedeemError ? error.message : 'Internal server error during redeem';
     console.error(`✗ REDEEM incomplete: ${message}`);
     sendProgress(username, `Error during redeem: ${message}`, processEvents);
-    return c.json({
-      error: message, phase: 'SETTLED', settledButNotRedeemed: true,
-      settlement, qualityVerdicts,
-    }, 502);
+    return c.json(
+      {
+        error: message,
+        phase: 'SETTLED',
+        settledButNotRedeemed: true,
+        settlement,
+        qualityVerdicts,
+        plan,
+        usage: checkUsage(guardKey),
+      },
+      502
+    );
   }
 });
 
 app.post('/debug/preview', async (c) => {
   const body = await c.req.json().catch(() => ({}));
   const task = typeof body?.task === 'string' && body.task.trim() ? body.task.trim() : '';
+  const userAddr =
+    typeof body?.userAddr === 'string' && body.userAddr.trim() ? body.userAddr.trim() : process.env.USER_ADDR;
   if (!task) {
     return c.json({ error: 'task is required' }, 400);
   }
 
+  // Same guard as /route — this is the most directly abusable route (no
+  // payment gate at all), so it gets the rate limit too.
+  const guardKey = usageKey(userAddr, c.req.header('x-session-id'));
+  const guardVerdict = checkUsage(guardKey);
+  if (!guardVerdict.allowed) {
+    console.error(`✗ GUARD blocked ${guardKey}: ${guardVerdict.reason}`);
+    return c.json({ error: guardVerdict.reason, phase: 'GUARD', zeroSpend: true, usage: guardVerdict }, 429);
+  }
+
   try {
     const result = await debugPreviewAll(task);
-    return c.json({ debug: true, task, result });
+    recordFreeRun(guardKey, AGENT_REGISTRY.length);
+    return c.json({ debug: true, task, result, usage: checkUsage(guardKey) });
   } catch (error) {
     console.error('Debug preview failed:', error);
     return c.json({ error: error instanceof Error ? error.message : String(error) }, 500);
@@ -338,6 +464,29 @@ app.get('/admin/quality-gate', (c) => {
   return c.json({ qualityGateMode: getQualityGateMode(), forcedFailAgent: getForcedFailAgent() });
 });
 
+// Demo lever for the abuse guard, mirrors setQualityGateMode. Registered
+// before /admin/guard/:mode below — 'reset' is one path segment and would
+// otherwise be captured by that route's :mode param, same footgun as
+// target-clear above.
+app.post('/admin/guard/reset', (c) => {
+  resetUsage();
+  console.log('⚙ abuse guard usage store reset via admin endpoint');
+  return c.json({ status: 'ok' });
+});
+const GUARD_MODES = ['on', 'off'] as const;
+app.post('/admin/guard/:mode', (c) => {
+  const mode = c.req.param('mode');
+  if (!GUARD_MODES.includes(mode as (typeof GUARD_MODES)[number])) {
+    return c.json({ error: `invalid mode '${mode}' — use on or off` }, 400);
+  }
+  setGuardEnabled(mode === 'on');
+  console.log(`⚙ abuse guard set to '${mode}' via admin endpoint`);
+  return c.json({ status: 'ok', guardEnabled: isGuardEnabled() });
+});
+
+// Judge-triggerable self-test for the replay guard — fires N concurrent
+// /redeem calls at one real agent with the same (synthetic) group+index
+// proof and shows the guard let exactly one through. See selfTestReplay.ts.
 app.post('/self-test/replay', async (c) => {
   const body = await c.req.json().catch(() => ({}));
   const agentName = typeof body?.agent === 'string' && body.agent.trim() ? body.agent.trim() : AGENT_REGISTRY[0]?.name;
@@ -370,9 +519,34 @@ app.get('/agents', (c) => {
   });
 });
 
+// Pseudonymous keys, counts, and flags only — no addresses, no task text, no
+// agent output. See router/reputation.ts.
+app.get('/usage', (c) => {
+  return c.json({ guardEnabled: isGuardEnabled(), usage: allUsage() });
+});
+
+// Calls no agent, spends nothing, signs nothing — selectAgents() + buildPlan()
+// only. The single best demo affordance for this feature: instant, free, and
+// has no runtime dependency on the agents or algonode being up.
+app.post('/plan', async (c) => {
+  const body = await c.req.json().catch(() => ({}));
+  const task = typeof body?.task === 'string' && body.task.trim() ? body.task.trim() : '';
+  if (!task) {
+    return c.json({ error: 'task is required' }, 400);
+  }
+  const registry = await selectAgents(task);
+  const plan = buildPlan(task, registry);
+  return c.json({ plan });
+});
+
 // The frontend is the standalone Vite app in FRONTEND/ (proxies here on
 // dev, its own build in production) — this router is API/WS-only, no
-// static UI to serve.
+// static UI to serve. The old vanilla-JS ui/index.html this branch also
+// touched is dropped entirely (see the ui/index.html merge resolution) --
+// fully superseded by FRONTEND/'s DevView/UserView, which already has
+// everything it had (phase tracker, kill switch, quality gate override)
+// plus chat history and the two chat UIs; keeping it would just be dead
+// code with nothing left to serve it.
 app.notFound((c) => {
   return c.json({ error: 'Endpoint not found', path: c.req.path }, 404);
 });
