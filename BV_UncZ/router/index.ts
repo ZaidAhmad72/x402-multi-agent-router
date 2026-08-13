@@ -42,7 +42,7 @@ import {
 import { AGENT_REGISTRY } from '../shared/constants';
 
 import { connectDB } from './db';
-import { authApp } from './auth';
+import { authApp, verifySessionToken } from './auth';
 import { historyApp } from './history';
 import { ProcessEvent } from '../shared/types/history';
 
@@ -451,17 +451,35 @@ app.post('/admin/quality-gate/target-clear', (c) => {
   return c.json({ status: 'ok', forcedFailAgent: null });
 });
 
+const userQualityModes = new Map<string, QualityGateMode>();
+
+function getUserFromRequest(c: any): string | null {
+  const authHeader = c.req.header('Authorization');
+  if (authHeader) {
+    const token = authHeader.replace(/^Bearer\s+/i, '').trim();
+    const verified = verifySessionToken(token);
+    if (verified.valid && verified.username) return verified.username;
+  }
+  return null;
+}
+
 const QUALITY_GATE_MODES: QualityGateMode[] = ['auto', 'pass', 'fail'];
 app.post('/admin/quality-gate/:mode', (c) => {
   const mode = c.req.param('mode') as QualityGateMode;
   if (!QUALITY_GATE_MODES.includes(mode)) {
     return c.json({ error: `invalid mode '${mode}'` }, 400);
   }
+  const username = getUserFromRequest(c);
+  if (username) {
+    userQualityModes.set(username, mode);
+  }
   setQualityGateMode(mode);
   return c.json({ status: 'ok', qualityGateMode: mode });
 });
 app.get('/admin/quality-gate', (c) => {
-  return c.json({ qualityGateMode: getQualityGateMode(), forcedFailAgent: getForcedFailAgent() });
+  const username = getUserFromRequest(c);
+  const mode = (username && userQualityModes.get(username)) || getQualityGateMode();
+  return c.json({ qualityGateMode: mode, forcedFailAgent: getForcedFailAgent() });
 });
 
 // Demo lever for the abuse guard, mirrors setQualityGateMode. Registered
