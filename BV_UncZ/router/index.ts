@@ -35,7 +35,7 @@ import { historyApp } from './history';
 import { Message, ProcessEvent } from '../shared/types/history';
 
 config();
-config({ path: '../.env.wallet' });
+config({ path: '../.env.wallets' });
 
 const requiredWallets = [
   { name: 'Router', var: 'ROUTER_ADDR' },
@@ -91,10 +91,12 @@ app.get('/ws/:username', upgradeWebSocket((c) => {
   const username = c.req.param('username');
   return {
     onOpen(_event, ws) {
+      if (!username) return;
       activeConnections.set(username, ws);
       console.log(`WS Connected: ${username}`);
     },
     onClose() {
+      if (!username) return;
       activeConnections.delete(username);
       console.log(`WS Disconnected: ${username}`);
     }
