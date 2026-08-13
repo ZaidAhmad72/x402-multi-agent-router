@@ -16,21 +16,6 @@ type Agent = { name: string; url: string; description: string };
 type QualityGateMode = 'auto' | 'pass' | 'fail';
 type Session = { chatId: string; title: string; updatedAt: string };
 
-// Task text gets embedded twice: as a JS string literal inside an inline
-// onclick="..." attribute, which is itself inside an HTML attribute value.
-// Only escaping ' (the JS string delimiter) left " (the HTML attribute
-// delimiter) unescaped -- a task containing a double-quote (e.g. a task
-// that quotes something) would prematurely close the onclick attribute and
-// silently break the Route/Preview buttons. Escapes both delimiters, plus
-// backslashes and newlines so the JS string literal itself stays valid.
-function escapeForInlineHandler(s: string): string {
-  return s
-    .replace(/\\/g, '\\\\')
-    .replace(/'/g, "\\'")
-    .replace(/\n/g, '\\n')
-    .replace(/"/g, '&quot;')
-    .replace(/</g, '&lt;');
-}
 
 export default function ChatApp() {
   const navigate = useNavigate();
@@ -278,55 +263,30 @@ export default function ChatApp() {
     setMessages(prev => [...prev, { ...msg, id: Date.now().toString() + Math.random() }]);
   };
 
-  const handleSend = () => {
+  // Route/Preview used to ask for confirmation in a second chat message
+  // ("Do you want to run a live payment route... or a free preview?") with
+  // its own Route/Preview/Cancel buttons -- meaning clicking Route in the
+  // input box didn't actually route anything, it just asked the same
+  // question again. These now execute directly on click; the task the user
+  // typed still shows up as their own chat message first, so there's no
+  // loss of "what did I just ask for" context, just no redundant second click.
+  const handleRouteClick = () => {
     if (!input.trim()) return;
-    
-    // User message
-    addMessage({ sender: 'user', text: input.trim() });
+    const task = input.trim();
+    addMessage({ sender: 'user', text: task });
     setProcessingLogs([]);
-    
-    // Agent response asking for budget
-    setTimeout(() => {
-      addMessage({
-        sender: 'agent',
-        html: `
-          <div style="margin-bottom:12px;">I will route this task. Do you want to run a live payment route (max spend $${maxSpend.toFixed(2)}) or a free preview?</div>
-          <button class="btn primary" id="approve-btn" style="margin-right:8px; margin-bottom:8px;" onclick="window.dispatchEvent(new CustomEvent('execute-route', {detail: {task: '${escapeForInlineHandler(input)}', maxSpend: ${maxSpend}}}))">
-            Route (Max $${maxSpend.toFixed(2)})
-          </button>
-          <button class="btn" style="margin-right:8px; margin-bottom:8px; background: rgba(255,255,255,0.1);" onclick="window.dispatchEvent(new CustomEvent('execute-preview', {detail: '${escapeForInlineHandler(input)}'}))">
-            Preview (no payment)
-          </button>
-          <button class="btn danger" style="margin-bottom:8px;" onclick="window.dispatchEvent(new Event('cancel-task'))">Cancel</button>
-        `
-      });
-      setInput('');
-    }, 600);
+    setInput('');
+    executeRoute(task, maxSpend);
   };
 
-  useEffect(() => {
-    const handleRoute = (e: any) => {
-      const { task, maxSpend } = e.detail;
-      executeRoute(task, maxSpend);
-    };
-    const handlePreview = (e: any) => {
-      const task = e.detail;
-      executePreview(task);
-    };
-    const handleCancel = () => {
-      addMessage({ sender: 'system', text: 'Task cancelled.' });
-      setCurrentPhase('IDLE');
-    };
-
-    window.addEventListener('execute-route', handleRoute);
-    window.addEventListener('execute-preview', handlePreview);
-    window.addEventListener('cancel-task', handleCancel);
-    return () => {
-      window.removeEventListener('execute-route', handleRoute);
-      window.removeEventListener('execute-preview', handlePreview);
-      window.removeEventListener('cancel-task', handleCancel);
-    };
-  }, []);
+  const handlePreviewClick = () => {
+    if (!input.trim()) return;
+    const task = input.trim();
+    addMessage({ sender: 'user', text: task });
+    setProcessingLogs([]);
+    setInput('');
+    executePreview(task);
+  };
 
   const executePreview = async (task: string) => {
     setCurrentPhase('IDLE');
@@ -624,7 +584,87 @@ export default function ChatApp() {
             </button>
           </div>
         </div>
-        
+
+        <div className="input-area" style={{ marginBottom: '20px' }}>
+          <div style={{ display: 'flex', gap: '12px', marginBottom: '8px' }}>
+             <div style={{ flex: 1, position: 'relative' }}>
+               <label style={{fontSize:'12px', color:'var(--text-muted)', display:'block', marginBottom:'4px'}}>Task</label>
+               {isListening && (
+                 <div style={{
+                   position: 'absolute',
+                   top: '-24px',
+                   right: '12px',
+                   background: 'rgba(0, 0, 0, 0.8)',
+                   border: '1px solid var(--primary)',
+                   padding: '4px 10px',
+                   borderRadius: '12px',
+                   display: 'flex',
+                   alignItems: 'center',
+                   gap: '8px',
+                   color: 'var(--primary)',
+                   fontSize: '11px',
+                   fontWeight: 600,
+                   boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
+                   zIndex: 10
+                 }}>
+                   Listening
+                   <div className="sound-waves">
+                     <div className="wave"></div>
+                     <div className="wave"></div>
+                     <div className="wave"></div>
+                     <div className="wave"></div>
+                   </div>
+                 </div>
+               )}
+               <input
+                 type="text"
+                 className="custom-input"
+                 value={input + (interimTranscript ? (input && !input.endsWith(' ') ? ' ' : '') + interimTranscript : '')}
+                 onChange={e => setInput(e.target.value)}
+                 onKeyDown={e => {
+                   if (e.key === 'Enter') handleRouteClick();
+                 }}
+                 style={{ paddingRight: '40px' }}
+               />
+               <button
+                 type="button"
+                 onClick={toggleListening}
+                 style={{
+                   position: 'absolute',
+                   right: '8px',
+                   top: '24px',
+                   background: 'none',
+                   border: 'none',
+                   color: isListening ? 'var(--danger)' : 'var(--text-muted)',
+                   cursor: 'pointer'
+                 }}
+                 title="Voice to text"
+               >
+                 {isListening ? <MicOff size={18} /> : <Mic size={18} />}
+               </button>
+             </div>
+             <div style={{ width: '120px' }}>
+               <label style={{fontSize:'12px', color:'var(--text-muted)', display:'block', marginBottom:'4px'}}>Max Spend (USD)</label>
+               <input
+                 type="number"
+                 step="0.01"
+                 className="custom-input"
+                 value={maxSpend}
+                 onChange={e => setMaxSpend(parseFloat(e.target.value))}
+               />
+             </div>
+          </div>
+          <div style={{ display: 'flex', gap: '8px' }}>
+             <button className="btn primary" onClick={handleRouteClick} disabled={!input.trim()}>
+               <Play size={14} style={{marginRight: '6px', display:'inline-block', verticalAlign:'middle'}}/>
+               Route
+             </button>
+             <button className="btn" style={{background: 'rgba(255,255,255,0.05)'}} onClick={handlePreviewClick} disabled={!input.trim()}>
+               Preview (no payment)
+             </button>
+          </div>
+        </div>
+
         {/* Big Phase Tracker - as requested by UI screenshots */}
         <div className="panel" style={{marginBottom: '20px'}}>
           <h3 style={{fontSize:'12px', color:'var(--text-muted)', marginBottom:'12px', textTransform:'uppercase'}}>Phase</h3>
@@ -687,86 +727,6 @@ export default function ChatApp() {
             </div>
           )}
           <div ref={messagesEndRef} />
-        </div>
-
-        <div className="input-area">
-          <div style={{ display: 'flex', gap: '12px', marginBottom: '8px' }}>
-             <div style={{ flex: 1, position: 'relative' }}>
-               <label style={{fontSize:'12px', color:'var(--text-muted)', display:'block', marginBottom:'4px'}}>Task</label>
-               {isListening && (
-                 <div style={{
-                   position: 'absolute',
-                   top: '-24px',
-                   right: '12px',
-                   background: 'rgba(0, 0, 0, 0.8)',
-                   border: '1px solid var(--primary)',
-                   padding: '4px 10px',
-                   borderRadius: '12px',
-                   display: 'flex',
-                   alignItems: 'center',
-                   gap: '8px',
-                   color: 'var(--primary)',
-                   fontSize: '11px',
-                   fontWeight: 600,
-                   boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
-                   zIndex: 10
-                 }}>
-                   Listening
-                   <div className="sound-waves">
-                     <div className="wave"></div>
-                     <div className="wave"></div>
-                     <div className="wave"></div>
-                     <div className="wave"></div>
-                   </div>
-                 </div>
-               )}
-               <input 
-                 type="text" 
-                 className="custom-input"
-                 value={input + (interimTranscript ? (input && !input.endsWith(' ') ? ' ' : '') + interimTranscript : '')}
-                 onChange={e => setInput(e.target.value)}
-                 onKeyDown={e => {
-                   if (e.key === 'Enter') handleSend();
-                 }}
-                 style={{ paddingRight: '40px' }}
-               />
-               <button 
-                 type="button"
-                 onClick={toggleListening}
-                 style={{
-                   position: 'absolute',
-                   right: '8px',
-                   top: '24px',
-                   background: 'none',
-                   border: 'none',
-                   color: isListening ? 'var(--danger)' : 'var(--text-muted)',
-                   cursor: 'pointer'
-                 }}
-                 title="Voice to text"
-               >
-                 {isListening ? <MicOff size={18} /> : <Mic size={18} />}
-               </button>
-             </div>
-             <div style={{ width: '120px' }}>
-               <label style={{fontSize:'12px', color:'var(--text-muted)', display:'block', marginBottom:'4px'}}>Max Spend (USD)</label>
-               <input 
-                 type="number" 
-                 step="0.01"
-                 className="custom-input"
-                 value={maxSpend}
-                 onChange={e => setMaxSpend(parseFloat(e.target.value))}
-               />
-             </div>
-          </div>
-          <div style={{ display: 'flex', gap: '8px' }}>
-             <button className="btn primary" onClick={handleSend} disabled={!input.trim()}>
-               <Play size={14} style={{marginRight: '6px', display:'inline-block', verticalAlign:'middle'}}/>
-               Route
-             </button>
-             <button className="btn" style={{background: 'rgba(255,255,255,0.05)'}} onClick={() => executePreview(input.trim())} disabled={!input.trim()}>
-               Preview (no payment)
-             </button>
-          </div>
         </div>
       </div>
 

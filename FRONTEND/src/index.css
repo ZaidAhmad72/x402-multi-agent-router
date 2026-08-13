@@ -130,6 +130,11 @@ h1, h2, h3, h4, h5, h6 {
   background: rgba(255, 255, 255, 0.1);
   border-radius: 10px;
 }
+.messages-area::-webkit-scrollbar-button {
+  display: none;
+  height: 0;
+  width: 0;
+}
 
 .message-bubble {
   max-width: 85%;
@@ -167,7 +172,6 @@ h1, h2, h3, h4, h5, h6 {
 
 .input-area {
   position: relative;
-  margin-top: auto;
   background: rgba(13, 15, 19, 0.6);
   border: 1px solid var(--panel-border);
   padding: 16px;
