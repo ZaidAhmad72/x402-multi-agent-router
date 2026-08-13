@@ -57,7 +57,14 @@ export const AGENT_REGISTRY: AgentRegistryEntry[] = [
     url: 'http://localhost:4003',
     description:
       'deterministic, non-LLM live currency conversion and chart rendering. ONLY needed when the task explicitly involves converting or comparing a monetary amount between currencies.',
-    dependsOn: ['writer'],
+    // No dependsOn on 'writer' on purpose — formatter parses the amount/
+    // currency straight out of the raw task text (its regex prefers a
+    // number adjacent to a currency word, see agents/formatter's
+    // parseAmountAndCurrency), so it doesn't need writer's paraphrase.
+    // Depending on writer used to force research+writer into every
+    // currency/weather task even when they added nothing, which is exactly
+    // what selectAgents.ts's dropRedundantGeneralAgents() now also guards
+    // against at the selection level.
     buildInput: (task, outputs) => ({ text: outputs.writer?.summary?.body ?? task }),
   },
   {

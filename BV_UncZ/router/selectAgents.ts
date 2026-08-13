@@ -53,12 +53,33 @@ function withDependencies(names: Set<string>): Set<string> {
   return names;
 }
 
+// The selector prompt already tells the LLM to prefer a specific agent
+// (weather/formatter) over the general research/writer pair when the
+// specific one covers the task -- but LLM instruction-following isn't 100%
+// reliable, and the failure mode is expensive: research/writer get pulled
+// into a purely weather/currency task, sometimes genuinely produce weak
+// output for a question outside their real need (verified live: "Lacks
+// specific factual data" / "Not focused on research summary"), and since
+// they're unstaked, that aborts the WHOLE route even though the agents that
+// actually mattered were fine. This is a deterministic backstop, not a
+// suggestion: weather and formatter (+ analysis, which exists specifically
+// to narrate their output) are a complete, self-sufficient answer on their
+// own, so if either was picked, research/writer add cost and abort-risk
+// without adding coverage -- drop them regardless of what the LLM said.
+function dropRedundantGeneralAgents(names: Set<string>): Set<string> {
+  if (names.has('weather') || names.has('formatter')) {
+    names.delete('research');
+    names.delete('writer');
+  }
+  return names;
+}
+
 function normalize(rawAgents: unknown): AgentRegistryEntry[] {
   const valid = new Set(AGENT_REGISTRY.map((a) => a.name));
   const picked = new Set(
     Array.isArray(rawAgents) ? rawAgents.filter((n): n is string => typeof n === 'string' && valid.has(n)) : []
   );
-  const withDeps = withDependencies(picked);
+  const withDeps = dropRedundantGeneralAgents(withDependencies(picked));
   if (withDeps.size === 0) return AGENT_REGISTRY; // fail open — empty/invalid selection
   return AGENT_REGISTRY.filter((a) => withDeps.has(a.name));
 }

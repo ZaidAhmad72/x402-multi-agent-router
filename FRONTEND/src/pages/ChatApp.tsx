@@ -363,8 +363,10 @@ export default function ChatApp() {
           resultHtml += `<div class="agent-block"><h4>${agent}</h4>${content}</div>`;
         });
       }
+      setProcessingLogs([]);
       addMessage({ sender: 'agent', html: resultHtml });
     } catch (e: any) {
+      setProcessingLogs([]);
       setMessages(prev => prev.filter(m => m.id !== thinkingId));
       addMessage({ sender: 'system', html: `<div class="badge danger">Error: ${e.message}</div>` });
     }
@@ -479,6 +481,7 @@ export default function ChatApp() {
         `;
       }
 
+      setProcessingLogs([]);
       addMessage({ sender: 'agent', html: resultHtml });
 
       if (username) {
@@ -486,9 +489,9 @@ export default function ChatApp() {
       }
     } catch (err: any) {
       const errMsg = err.message || String(err);
-      setProcessingLogs(prev => [...prev, `Error: ${errMsg}`]);
       setMessages(prev => prev.filter(m => m.id !== thinkingId));
       setCurrentPhase('ERROR');
+      setProcessingLogs([]);
       addMessage({ sender: 'system', html: `<div class="badge danger">Failed to connect to router: ${errMsg}</div>` });
     }
   };
