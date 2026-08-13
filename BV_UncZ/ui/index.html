@@ -141,17 +141,25 @@
     <input id="maxSpend" type="number" step="0.01" value="0.10" />
     <button id="route-btn" onclick="route()">Route</button>
     <button id="preview-btn" onclick="preview()" style="background: var(--muted); margin-left: 8px;">Preview (no payment)</button>
+    <button id="plan-btn" onclick="planOnly()" style="background: var(--muted); margin-left: 8px;">Plan (no payment)</button>
   </div>
 
   <div class="panel">
     <h2>Phase</h2>
     <div class="phases">
-      <div class="phase-step pending" id="phase-quality"><span class="icon">1</span>QUALITY</div>
-      <div class="phase-step pending" id="phase-quote"><span class="icon">2</span>QUOTE</div>
-      <div class="phase-step pending" id="phase-settle"><span class="icon">3</span>SETTLE</div>
-      <div class="phase-step pending" id="phase-redeem"><span class="icon">4</span>REDEEM</div>
+      <div class="phase-step pending" id="phase-guard"><span class="icon">1</span>GUARD</div>
+      <div class="phase-step pending" id="phase-plan"><span class="icon">2</span>PLAN</div>
+      <div class="phase-step pending" id="phase-quality"><span class="icon">3</span>QUALITY</div>
+      <div class="phase-step pending" id="phase-quote"><span class="icon">4</span>QUOTE</div>
+      <div class="phase-step pending" id="phase-settle"><span class="icon">5</span>SETTLE</div>
+      <div class="phase-step pending" id="phase-redeem"><span class="icon">6</span>REDEEM</div>
     </div>
     <div id="error-area"></div>
+  </div>
+
+  <div class="panel" id="plan-panel" style="display:none;">
+    <h2>Execution plan <span class="subtitle" style="margin:0;">(dependency DAG, derived deterministically — no LLM, no network call)</span></h2>
+    <div id="plan-body"></div>
   </div>
 
   <div class="panel" id="quality-panel" style="display:none;">
@@ -186,6 +194,27 @@
       <thead><tr><th>Wallet</th><th>Address</th><th>ALGO</th><th>USDC</th></tr></thead>
       <tbody></tbody>
     </table>
+  </div>
+
+  <div class="panel" id="guard-panel">
+    <h2>Abuse guard <span class="subtitle" style="margin:0;">(pseudonymous per-user free-run rate limit — closes the free-compute hole in the quality gate)</span></h2>
+    <div class="admin-row">
+      <button class="small" onclick="setGuard('on')">Guard on</button>
+      <button class="small kill" onclick="setGuard('off')">Guard off</button>
+      <button class="small" onclick="resetGuard()">Reset</button>
+      <span class="admin-status" id="guard-status">on</span>
+    </div>
+    <table id="usage-table" style="margin-top:10px;">
+      <thead><tr><th>Key</th><th>Free runs</th><th>Settled</th><th>Aborted</th><th>Rebates</th><th>Flags</th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <p class="subtitle" style="margin:10px 0 0;">
+      Privacy: the store contains only a salted, truncated one-way hash of userAddr/session id, plus
+      counts and flags — never the raw address, task text, or agent output. In-memory only; a router
+      restart clears it. Identity is not cryptographically verified yet, so a determined abuser can
+      rotate userAddr and reset their counters — this guard raises the cost of abuse, it does not
+      prevent it. Wallet ownership proof (sign a nonce, verify the signature) is the next milestone.
+    </p>
   </div>
 
   <div class="panel">
@@ -230,12 +259,84 @@ function setPhase(id, status) {
 }
 
 function resetPhases() {
-  ['quality', 'quote', 'settle', 'redeem'].forEach((p) => setPhase(p, 'pending'));
+  ['guard', 'plan', 'quality', 'quote', 'settle', 'redeem'].forEach((p) => setPhase(p, 'pending'));
   document.getElementById('error-area').innerHTML = '';
+  document.getElementById('plan-panel').style.display = 'none';
   document.getElementById('quality-panel').style.display = 'none';
   document.getElementById('settlement-panel').style.display = 'none';
   document.getElementById('receipt-panel').style.display = 'none';
   document.getElementById('results-panel').style.display = 'none';
+}
+
+// Inline SVG DAG — no library, kept under ~80 lines. One column per layer
+// (left to right, execution order); agents in the same column are visibly
+// parallel, which is the whole point of showing this. Nodes are coloured by
+// settlement outcome once a route completes (paid/slashed/pending), reusing
+// the existing status colour variables.
+function renderPlan(plan, settlement) {
+  const panel = document.getElementById('plan-panel');
+  if (!plan) { panel.style.display = 'none'; return; }
+  panel.style.display = 'block';
+
+  const outcomeByAgent = {};
+  (settlement && settlement.perAgent || []).forEach((p) => { outcomeByAgent[p.agent] = p.outcome; });
+
+  const boxW = 130, boxH = 44, colGap = 60, rowGap = 16, pad = 20;
+  const layerCount = plan.layers.length;
+  const maxWidth = plan.shape.maxParallelWidth;
+  const svgW = pad * 2 + layerCount * boxW + Math.max(0, layerCount - 1) * colGap;
+  const svgH = pad * 2 + maxWidth * boxH + Math.max(0, maxWidth - 1) * rowGap;
+
+  const pos = {};
+  plan.layers.forEach((names, li) => {
+    names.forEach((name, ni) => {
+      pos[name] = { x: pad + li * (boxW + colGap), y: pad + ni * (boxH + rowGap) };
+    });
+  });
+
+  const colorFor = (name) => {
+    const outcome = outcomeByAgent[name];
+    if (outcome === 'paid') return 'var(--good)';
+    if (outcome === 'slashed') return 'var(--bad)';
+    return 'var(--pending)';
+  };
+  const textColorFor = (name) => (outcomeByAgent[name] ? '#05130c' : 'var(--text)');
+
+  let edgesSvg = plan.edges.map((e) => {
+    const from = pos[e.from], to = pos[e.to];
+    if (!from || !to) return '';
+    const x1 = from.x + boxW, y1 = from.y + boxH / 2;
+    const x2 = to.x, y2 = to.y + boxH / 2;
+    return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#arrow)" />`;
+  }).join('');
+
+  let nodesSvg = plan.nodes.map((n) => {
+    const p = pos[n.name];
+    return `
+      <g>
+        <rect x="${p.x}" y="${p.y}" width="${boxW}" height="${boxH}" rx="8" fill="${colorFor(n.name)}" stroke="var(--border)" />
+        <text x="${p.x + boxW / 2}" y="${p.y + boxH / 2 + 4}" text-anchor="middle" font-size="12" fill="${textColorFor(n.name)}" font-weight="600">${escapeHtml(n.name)}</text>
+      </g>`;
+  }).join('');
+
+  const svg = `
+    <svg width="100%" viewBox="0 0 ${svgW} ${svgH}" xmlns="http://www.w3.org/2000/svg" style="max-width:${svgW}px;">
+      <defs>
+        <marker id="arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M0,0 L8,4 L0,8 z" fill="var(--muted)" />
+        </marker>
+      </defs>
+      ${edgesSvg}
+      ${nodesSvg}
+    </svg>`;
+
+  const gf = plan.groupForecast;
+  const caption = `${plan.shape.agentCount} agents · ${plan.shape.layerCount} layers · ` +
+    `max parallel width ${plan.shape.maxParallelWidth} · group forecast ${gf.total}/${gf.limit} slots` +
+    (gf.withinLimit ? '' : ' — EXCEEDS LIMIT');
+
+  document.getElementById('plan-body').innerHTML =
+    `<div style="overflow-x:auto;">${svg}</div><p class="subtitle" style="margin:10px 0 0;">${escapeHtml(caption)}</p>`;
 }
 
 function renderQualityVerdicts(verdicts) {
@@ -350,7 +451,7 @@ async function route() {
   if (!task || !maxSpend) { alert('task and maxSpend are required'); return; }
 
   resetPhases();
-  setPhase('quality', 'active');
+  setPhase('guard', 'active');
   document.getElementById('route-btn').disabled = true;
 
   try {
@@ -361,15 +462,29 @@ async function route() {
     });
     const data = await res.json();
     renderQualityVerdicts(data.qualityVerdicts);
+    if (data.plan) renderPlan(data.plan, data.settlement);
 
-    if (data.phase === 'QUALITY') {
+    if (data.phase === 'GUARD') {
+      setPhase('guard', 'failed');
+      renderError(data.error, data.zeroSpend);
+    } else if (data.phase === 'PLAN') {
+      setPhase('guard', 'done');
+      setPhase('plan', 'failed');
+      renderError(data.error, data.zeroSpend);
+    } else if (data.phase === 'QUALITY') {
+      setPhase('guard', 'done');
+      setPhase('plan', 'done');
       setPhase('quality', 'failed');
       renderError(data.error, data.zeroSpend);
     } else if (data.phase === 'QUOTE') {
+      setPhase('guard', 'done');
+      setPhase('plan', 'done');
       setPhase('quality', 'done');
       setPhase('quote', 'failed');
       renderError(data.error, data.zeroSpend);
     } else if (data.phase === 'SETTLED') {
+      setPhase('guard', 'done');
+      setPhase('plan', 'done');
       setPhase('quality', 'done');
       setPhase('quote', 'done');
       setPhase('settle', 'done');
@@ -377,6 +492,8 @@ async function route() {
       renderError(data.error, false);
       if (data.settlement) renderSettlement(data.settlement);
     } else if (data.phase === 'REDEEMED') {
+      setPhase('guard', 'done');
+      setPhase('plan', 'done');
       setPhase('quality', 'done');
       setPhase('quote', 'done');
       setPhase('settle', 'done');
@@ -385,15 +502,48 @@ async function route() {
       renderReceipt(data.receipt);
       renderResults(data);
     } else {
-      setPhase('quality', 'failed');
+      setPhase('guard', 'failed');
       renderError(data.error || 'Unknown response', false);
     }
   } catch (err) {
-    setPhase('quality', 'failed');
+    setPhase('guard', 'failed');
     renderError(String(err), false);
   } finally {
     document.getElementById('route-btn').disabled = false;
     refreshBalances();
+    refreshUsage();
+  }
+}
+
+async function planOnly() {
+  const task = document.getElementById('task').value.trim();
+  if (!task) { alert('task is required'); return; }
+
+  resetPhases();
+  document.getElementById('plan-btn').disabled = true;
+  document.getElementById('error-area').innerHTML =
+    '<div class="error-banner" style="color: var(--muted); border-color: var(--border); background: rgba(139,147,161,0.08);">Building the execution plan — no agent called, nothing quoted or signed…</div>';
+
+  try {
+    const res = await fetch('/plan', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ task }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      document.getElementById('error-area').innerHTML =
+        '<div class="error-banner">' + escapeHtml(data.error || 'Plan failed') + '</div>';
+      return;
+    }
+    document.getElementById('error-area').innerHTML =
+      '<div class="error-banner" style="color: var(--good); border-color: var(--good); background: rgba(62,207,142,0.1);">Plan only — no payment, no agent call. Shows the execution DAG and transaction-slot forecast the router would use.</div>';
+    renderPlan(data.plan, null);
+  } catch (err) {
+    document.getElementById('error-area').innerHTML =
+      '<div class="error-banner">' + escapeHtml(String(err)) + '</div>';
+  } finally {
+    document.getElementById('plan-btn').disabled = false;
   }
 }
 
@@ -469,6 +619,36 @@ function renderAdminRows() {
   `).join('');
 }
 
+async function refreshUsage() {
+  try {
+    const res = await fetch('/usage');
+    const { guardEnabled, usage } = await res.json();
+    document.getElementById('guard-status').textContent = guardEnabled ? 'on' : 'off';
+    document.querySelector('#usage-table tbody').innerHTML = usage.map(u => `
+      <tr>
+        <td class="tx-id">${escapeHtml(u.key)}</td>
+        <td>${u.counts.freeRuns}</td>
+        <td>${u.counts.settled}</td>
+        <td>${u.counts.aborted}</td>
+        <td>${u.counts.rebates}</td>
+        <td style="color:${u.flags.length ? 'var(--bad)' : 'var(--muted)'};">${u.flags.join(', ') || '—'}</td>
+      </tr>
+    `).join('');
+  } catch {}
+}
+
+async function setGuard(mode) {
+  const res = await fetch('/admin/guard/' + mode, { method: 'POST' });
+  const json = await res.json();
+  document.getElementById('guard-status').textContent = (json.guardEnabled === undefined ? mode === 'on' : json.guardEnabled) ? 'on' : 'off';
+  refreshUsage();
+}
+
+async function resetGuard() {
+  await fetch('/admin/guard/reset', { method: 'POST' });
+  refreshUsage();
+}
+
 async function setQualityGate(mode) {
   const res = await fetch('/admin/quality-gate/' + mode, { method: 'POST' });
   const json = await res.json();
@@ -515,6 +695,7 @@ async function loadAgents() {
 
 loadAgents();
 refreshBalances();
+refreshUsage();
 </script>
 </body>
 </html>

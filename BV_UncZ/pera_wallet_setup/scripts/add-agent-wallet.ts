@@ -23,8 +23,9 @@ if (process.env[envKeyAddr]) {
 }
 
 const acct = algosdk.generateAccount();
+const addr = acct.addr.toString();
 const mnemonic = algosdk.secretKeyToMnemonic(acct.sk);
 
-fs.appendFileSync(ENV_PATH, `\n${ROLE}_ADDR=${acct.addr}\n${ROLE}_MNEMONIC="${mnemonic}"\n`);
-console.log(`Generated ${ROLE}: ${acct.addr}`);
+fs.appendFileSync(ENV_PATH, `\n${ROLE}_ADDR=${addr}\n${ROLE}_MNEMONIC="${mnemonic}"\n`);
+console.log(`Generated ${ROLE}: ${addr}`);
 console.log(`Appended to .env.wallets. Still needs: ALGO funding + USDC ASA opt-in (needs algod).`);

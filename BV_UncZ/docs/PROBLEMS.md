@@ -1,5 +1,66 @@
 # Problems Log
 
+## Abuse Guard + Plan DAG — free-run accounting doesn't match "twelve calls" literally
+
+**Symptom:** the implementation plan's acceptance criterion for the abuse guard says
+"`POST /debug/preview` twelve times → the twelfth returns 429". Live testing showed the block
+firing on the entry check for the 4th call, not the 12th (research's own request log confirmed
+only 3 successful `/debug/preview` calls reached it before the block).
+
+**Cause:** not a bug — `recordFreeRun(key, count)`'s contract (module API, `router/reputation.ts`)
+is explicit: `count` = number of agents actually trial-run in that call, not 1-per-HTTP-call.
+`debugPreviewAll()` (`router/debugPreview.ts`) always trial-runs the *entire* 5-agent
+`AGENT_REGISTRY`, unconditionally — it doesn't go through `selectAgents()`. So each
+`/debug/preview` call consumes 5 free-run credits, not 1, against `MAX_FREE_RUNS = 12`. Three
+calls (15 credits) cross the threshold before a 4th is attempted; the informational `usage`
+snapshot on a just-succeeded response can also show `allowed: false` for the *next* call, which
+looks like a contradiction until you notice it's forward-looking state, not this call's verdict.
+
+**Resolution:** kept the literal, unambiguous module contract (`count` = agents trial-run) rather
+than special-casing `/debug/preview` to count 1 per call — it's the semantically correct unit
+("unpaid compute consumed"), it's what `/route` already does (`recordFreeRun(key,
+registry.length)`), and `A.5`'s own text calls the constants "suggested starting values...tune
+them so the demo tasks pass comfortably." The rate limit still demonstrably fires and recovers
+correctly (verified live: blocks at the right point, `/admin/guard/reset` and `/admin/guard/off`
+both restore full access, `GET /usage` shows only pseudonymous key/counts/flags). Not changing the
+9.10-criterion's literal wording to "the fourth call" felt worse than noting the discrepancy here
+— the criterion's numbers were an estimate made without accounting for `debugPreviewAll` always
+running the full registry.
+
+---
+
+## Feature build (Abuse Guard + Plan DAG) — environment gaps hit during live verification
+
+Two pre-existing environment gaps blocked live acceptance testing partway through, neither caused
+by the new code:
+
+1. **`GROQ_API_KEY` unset for the router.** `selectAgents()` and `runQualityGate()` were falling
+   back to the full 5-agent registry on every task (their documented fail-open behaviour — see
+   `selectAgents.ts` and `qualityGate.ts` doc comments), which incidentally exercises Plan DAG
+   acceptance criterion 5 for free, but meant dynamic per-task subsets (criteria B.7 #1/#2)
+   couldn't be observed until a key was supplied. Fixed by adding `router/.env` (gitignored) with
+   a user-supplied key.
+2. **`weather` and `analysis` wallets unfunded / not opted into the USDC ASA.** `/route` failed at
+   SETTLE with `must optin` for any task selecting them, blocking every money-path acceptance
+   criterion for both features (paid settlement, budget-exceeded abort, staked-agent slash,
+   receipt colouring). All five agent wallets were later **regenerated** (new `AVM_ADDRESS` per
+   agent, new mnemonics known only to the user) and funded/opted-in out of band. Updated to match:
+   each `agents/*/.env`'s `AVM_ADDRESS`, and `.env.wallets`' `AGENT1_ADDR`..`AGENT5_ADDR` (the only
+   fields `router/balances.ts` actually reads for these — grepped the codebase first to confirm
+   `AGENT[1-5]_MNEMONIC` is unused dead config, not silently relied on anywhere, before leaving the
+   stale mnemonic lines in place rather than guessing new ones).
+
+**Side effect worth flagging:** the same wallet refresh flipped `research`/`writer`/`analysis`
+from `MOCK=true` to `MOCK=false` with a real `GROQ_API_KEY`, so their `/work` and `/debug/preview`
+routes now make live Groq calls instead of returning canned output. This immediately hit Groq's
+free-tier daily token cap (`100000 TPD`) during testing — a `429` from *inside* an agent's own
+LLM call, correctly caught by the quality gate's fail-closed-on-trial-run-error path (unstaked
+agent → whole route aborts, zero spend) and correctly counted by the new abuse guard as an
+`aborted` event. Not a bug in either new feature; recorded because a Groq 429 surfacing through
+`qualityVerdicts[].reason` could otherwise be mistaken for a broken trial-run call.
+
+---
+
 ## Post-Phase-4 — Lora explorer link 404s
 
 **Symptom:** the group ID link shown in the UI and returned by `/route`

@@ -5,7 +5,7 @@ dotenv.config({ path: ".env.wallets" });
 
 const algod = new algosdk.Algodv2("", "https://testnet-api.algonode.cloud", "");
 const USDC_ASA = 10458941;
-const roles = ["USER", "ROUTER", "AGENT1", "AGENT2", "AGENT3"];
+const roles = ["USER", "ROUTER", "ROUTER_FEE", "AGENT1", "AGENT2", "AGENT3", "AGENT4", "AGENT5"];
 
 (async () => {
   for (const role of roles) {

@@ -25,6 +25,19 @@ import {
   type QualityGateMode,
 } from './qualityGate';
 import { selfTestReplay } from './selfTestReplay';
+import { buildPlan } from './plan';
+import {
+  usageKey,
+  checkUsage,
+  recordFreeRun,
+  recordSettled,
+  recordAborted,
+  recordRebate,
+  allUsage,
+  setGuardEnabled,
+  isGuardEnabled,
+  resetUsage,
+} from './reputation';
 import { AGENT_REGISTRY } from '../shared/constants';
 
 config();
@@ -101,7 +114,36 @@ app.post('/route', async (c) => {
     return c.json({ error: 'maxSpend is required' }, 400);
   }
 
+  // GUARD — pseudonymous per-user rate limit, before any free agent work.
+  // See router/reputation.ts for the identity/privacy tradeoffs.
+  const guardKey = usageKey(userAddr, c.req.header('x-session-id'));
+  const guardVerdict = checkUsage(guardKey);
+  if (!guardVerdict.allowed) {
+    console.error(`✗ GUARD blocked ${guardKey}: ${guardVerdict.reason}`);
+    return c.json({ error: guardVerdict.reason, phase: 'GUARD', zeroSpend: true, usage: guardVerdict }, 429);
+  }
+
   const registry = await selectAgents(task);
+
+  // PLAN — deterministic execution DAG derived from the already-selected
+  // registry. No network call, no LLM: zero added latency, zero new failure
+  // point in the hot path. Forecasts the transaction-slot cost of this exact
+  // group *before* anything is quoted or signed — an earlier, advisory
+  // sibling of the authoritative gate in settle.ts, not a replacement for it.
+  const plan = buildPlan(task, registry);
+  console.log(
+    `PLAN — ${plan.shape.agentCount} agents, ${plan.shape.layerCount} layers, ` +
+      `max parallel width ${plan.shape.maxParallelWidth}, ` +
+      `group forecast ${plan.groupForecast.total}/${plan.groupForecast.limit}`
+  );
+  if (!plan.groupForecast.withinLimit) {
+    const message =
+      `Plan needs ${plan.groupForecast.total} transactions, exceeding Algorand's 16-transaction atomic ` +
+      'group limit. Nothing was quoted or signed. Beyond 16 the atomicity guarantee would have to hold ' +
+      'per chunk rather than globally — see future scope.';
+    console.error(`✗ ${message}`);
+    return c.json({ error: message, phase: 'PLAN', zeroSpend: true, plan }, 400);
+  }
 
   // QUALITY — trial-run every selected agent for free, before anyone is
   // asked for a price. A failing agent with a configured stake (stake.ts)
@@ -109,13 +151,18 @@ app.post('/route', async (c) => {
   // with no stake has no financial accountability to fall back on, so it
   // aborts the whole route here, same as before stake+slash existed.
   const qualityVerdicts = await runQualityGate(task, registry);
+  recordFreeRun(guardKey, registry.length);
   const unstakedFailures = qualityVerdicts.filter((v) => !v.ok && !v.staked);
   if (unstakedFailures.length > 0) {
     const message =
       `Quality gate rejected ${unstakedFailures.length} agent output(s) before any payment: ` +
       unstakedFailures.map((f) => `${f.agent} (${f.reason})`).join('; ');
     console.error(`✗ ${message}`);
-    return c.json({ error: message, phase: 'QUALITY', zeroSpend: true, qualityVerdicts }, 502);
+    recordAborted(guardKey);
+    return c.json(
+      { error: message, phase: 'QUALITY', zeroSpend: true, qualityVerdicts, plan, usage: checkUsage(guardKey) },
+      502
+    );
   }
 
   let quotePhase;
@@ -124,13 +171,21 @@ app.post('/route', async (c) => {
   } catch (error) {
     if (error instanceof LivenessError) {
       console.error(`✗ ${error.message}`);
-      return c.json({ error: error.message, phase: 'QUOTE', zeroSpend: true, qualityVerdicts }, 502);
+      recordAborted(guardKey);
+      return c.json(
+        { error: error.message, phase: 'QUOTE', zeroSpend: true, qualityVerdicts, plan, usage: checkUsage(guardKey) },
+        502
+      );
     }
     console.error('Unexpected error in QUOTE phase:', error);
     if (isNetworkConnectivityError(error)) {
-      return c.json({ error: NETWORK_ERROR_MESSAGE, phase: 'QUOTE', zeroSpend: true, qualityVerdicts }, 502);
+      recordAborted(guardKey);
+      return c.json(
+        { error: NETWORK_ERROR_MESSAGE, phase: 'QUOTE', zeroSpend: true, qualityVerdicts, plan, usage: checkUsage(guardKey) },
+        502
+      );
     }
-    return c.json({ error: 'Internal server error' }, 500);
+    return c.json({ error: 'Internal server error', plan }, 500);
   }
 
   let settlement;
@@ -139,11 +194,16 @@ app.post('/route', async (c) => {
   } catch (error) {
     if (error instanceof BudgetExceededError || error instanceof GroupTooLargeError) {
       console.error(`✗ ${error.message}`);
-      return c.json({ error: error.message, phase: 'QUOTE', zeroSpend: true, qualityVerdicts }, 400);
+      recordAborted(guardKey);
+      return c.json(
+        { error: error.message, phase: 'QUOTE', zeroSpend: true, qualityVerdicts, plan, usage: checkUsage(guardKey) },
+        400
+      );
     }
     console.error('Unexpected error in SETTLE phase:', error);
     const message = error instanceof Error ? error.message : String(error);
     if (message.includes('underflow on subtracting')) {
+      recordAborted(guardKey);
       return c.json(
         {
           error:
@@ -152,12 +212,15 @@ app.post('/route', async (c) => {
           phase: 'QUOTE',
           zeroSpend: true,
           qualityVerdicts,
+          plan,
+          usage: checkUsage(guardKey),
         },
         502
       );
     }
     if (message.includes('must optin')) {
       const addrMatch = message.match(/missing from (\S+)/);
+      recordAborted(guardKey);
       return c.json(
         {
           error:
@@ -168,14 +231,20 @@ app.post('/route', async (c) => {
           phase: 'QUOTE',
           zeroSpend: true,
           qualityVerdicts,
+          plan,
+          usage: checkUsage(guardKey),
         },
         502
       );
     }
     if (isNetworkConnectivityError(error)) {
-      return c.json({ error: NETWORK_ERROR_MESSAGE, phase: 'QUOTE', zeroSpend: true, qualityVerdicts }, 502);
+      recordAborted(guardKey);
+      return c.json(
+        { error: NETWORK_ERROR_MESSAGE, phase: 'QUOTE', zeroSpend: true, qualityVerdicts, plan, usage: checkUsage(guardKey) },
+        502
+      );
     }
-    return c.json({ error: 'Internal server error' }, 500);
+    return c.json({ error: 'Internal server error', plan }, 500);
   }
 
   // Money has moved at this point. A redeem failure here is a known,
@@ -195,6 +264,11 @@ app.post('/route', async (c) => {
       ...(p.outcome === 'slashed' ? { rebateToUser: userAddr, reason: p.reason } : {}),
     }));
 
+    recordSettled(guardKey);
+    if (settlement.perAgent.some((p) => p.outcome === 'slashed')) {
+      recordRebate(guardKey);
+    }
+
     return c.json({
       phase: 'REDEEMED',
       task,
@@ -203,9 +277,11 @@ app.post('/route', async (c) => {
       totalUsd: quotePhase.totalUsd,
       totalMicroUsdc: quotePhase.totalMicroUsdc,
       qualityVerdicts,
+      plan,
       settlement,
       receipt,
       result,
+      usage: checkUsage(guardKey),
     });
   } catch (error) {
     const message = error instanceof RedeemError ? error.message : 'Internal server error during redeem';
@@ -217,6 +293,8 @@ app.post('/route', async (c) => {
         settledButNotRedeemed: true,
         settlement,
         qualityVerdicts,
+        plan,
+        usage: checkUsage(guardKey),
       },
       502
     );
@@ -230,13 +308,25 @@ app.post('/route', async (c) => {
 app.post('/debug/preview', async (c) => {
   const body = await c.req.json().catch(() => ({}));
   const task = typeof body?.task === 'string' && body.task.trim() ? body.task.trim() : '';
+  const userAddr =
+    typeof body?.userAddr === 'string' && body.userAddr.trim() ? body.userAddr.trim() : process.env.USER_ADDR;
   if (!task) {
     return c.json({ error: 'task is required' }, 400);
   }
 
+  // Same guard as /route — this is the most directly abusable route (no
+  // payment gate at all), so it gets the rate limit too.
+  const guardKey = usageKey(userAddr, c.req.header('x-session-id'));
+  const guardVerdict = checkUsage(guardKey);
+  if (!guardVerdict.allowed) {
+    console.error(`✗ GUARD blocked ${guardKey}: ${guardVerdict.reason}`);
+    return c.json({ error: guardVerdict.reason, phase: 'GUARD', zeroSpend: true, usage: guardVerdict }, 429);
+  }
+
   try {
     const result = await debugPreviewAll(task);
-    return c.json({ debug: true, task, result });
+    recordFreeRun(guardKey, AGENT_REGISTRY.length);
+    return c.json({ debug: true, task, result, usage: checkUsage(guardKey) });
   } catch (error) {
     console.error('Debug preview failed:', error);
     return c.json({ error: error instanceof Error ? error.message : String(error) }, 500);
@@ -303,6 +393,26 @@ app.get('/admin/quality-gate', (c) => {
   return c.json({ qualityGateMode: getQualityGateMode(), forcedFailAgent: getForcedFailAgent() });
 });
 
+// Demo lever for the abuse guard, mirrors setQualityGateMode. Registered
+// before /admin/guard/:mode below — 'reset' is one path segment and would
+// otherwise be captured by that route's :mode param, same footgun as
+// target-clear above.
+app.post('/admin/guard/reset', (c) => {
+  resetUsage();
+  console.log('⚙ abuse guard usage store reset via admin endpoint');
+  return c.json({ status: 'ok' });
+});
+const GUARD_MODES = ['on', 'off'] as const;
+app.post('/admin/guard/:mode', (c) => {
+  const mode = c.req.param('mode');
+  if (!GUARD_MODES.includes(mode as (typeof GUARD_MODES)[number])) {
+    return c.json({ error: `invalid mode '${mode}' — use on or off` }, 400);
+  }
+  setGuardEnabled(mode === 'on');
+  console.log(`⚙ abuse guard set to '${mode}' via admin endpoint`);
+  return c.json({ status: 'ok', guardEnabled: isGuardEnabled() });
+});
+
 // Judge-triggerable self-test for the replay guard — fires N concurrent
 // /redeem calls at one real agent with the same (synthetic) group+index
 // proof and shows the guard let exactly one through. See selfTestReplay.ts.
@@ -340,6 +450,26 @@ app.get('/agents', (c) => {
   return c.json({
     agents: AGENT_REGISTRY.map((a) => ({ name: a.name, url: a.url, description: a.description, dependsOn: a.dependsOn ?? [] })),
   });
+});
+
+// Pseudonymous keys, counts, and flags only — no addresses, no task text, no
+// agent output. See router/reputation.ts.
+app.get('/usage', (c) => {
+  return c.json({ guardEnabled: isGuardEnabled(), usage: allUsage() });
+});
+
+// Calls no agent, spends nothing, signs nothing — selectAgents() + buildPlan()
+// only. The single best demo affordance for this feature: instant, free, and
+// has no runtime dependency on the agents or algonode being up.
+app.post('/plan', async (c) => {
+  const body = await c.req.json().catch(() => ({}));
+  const task = typeof body?.task === 'string' && body.task.trim() ? body.task.trim() : '';
+  if (!task) {
+    return c.json({ error: 'task is required' }, 400);
+  }
+  const registry = await selectAgents(task);
+  const plan = buildPlan(task, registry);
+  return c.json({ plan });
 });
 
 // Minimal UI — served as static files from ../ui, index.html at '/'.
