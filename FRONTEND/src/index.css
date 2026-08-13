@@ -144,7 +144,7 @@ h1, h2, h3, h4, h5, h6 {
   font-size: 14px;
   overflow-wrap: break-word;
   word-break: break-word;
-  overflow-x: hidden;
+  flex-shrink: 0;
 }
 
 .message-bubble.user {
@@ -251,26 +251,25 @@ h1, h2, h3, h4, h5, h6 {
 .badge.danger { background: rgba(239, 68, 68, 0.15); color: var(--danger); border: 1px solid rgba(239,68,68,0.3); }
 .badge.warning { background: rgba(245, 158, 11, 0.15); color: var(--warning); border: 1px solid rgba(245,158,11,0.3); }
 
-/* Big Phase Tracker */
 .phases-big {
-  display: flex;
-  gap: 12px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
 }
 .phase-big-step {
-  flex: 1;
   background: rgba(255,255,255,0.03);
   border: 1px solid var(--panel-border);
   border-radius: var(--radius-sm);
-  padding: 16px 8px;
+  padding: 10px 4px;
   text-align: center;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
   color: var(--text-muted);
   transition: all 0.3s;
 }
 .phase-big-step .num {
-  font-size: 20px;
-  margin-bottom: 4px;
+  font-size: 16px;
+  margin-bottom: 2px;
   font-family: 'Outfit', sans-serif;
 }
 .phase-big-step.active {

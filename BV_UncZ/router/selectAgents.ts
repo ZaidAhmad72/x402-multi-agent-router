@@ -53,6 +53,14 @@ function withDependencies(names: Set<string>): Set<string> {
   return names;
 }
 
+// Signals that the task has content weather/formatter/analysis don't cover
+// (none of them describe anything beyond weather numbers and currency
+// conversion) — sights, recommendations, safety, culture, general write-ups.
+// If any of these appear, research/writer are covering a real gap, not
+// duplicating weather/formatter, so the redundancy drop below must not fire.
+const GENERAL_CONTENT_SIGNALS =
+  /\b(research|writ(?:e|ing|er|ten)|report|article|summary|summarize|tourist|attractions?|sights?|sightseeing|things? to do|places? to (?:see|visit)|itinerary|guide|culture|history|safe(?:ty)?|recommend(?:ation)?s?)\b/i;
+
 // The selector prompt already tells the LLM to prefer a specific agent
 // (weather/formatter) over the general research/writer pair when the
 // specific one covers the task -- but LLM instruction-following isn't 100%
@@ -61,25 +69,29 @@ function withDependencies(names: Set<string>): Set<string> {
 // output for a question outside their real need (verified live: "Lacks
 // specific factual data" / "Not focused on research summary"), and since
 // they're unstaked, that aborts the WHOLE route even though the agents that
-// actually mattered were fine. This is a deterministic backstop, not a
-// suggestion: weather and formatter (+ analysis, which exists specifically
-// to narrate their output) are a complete, self-sufficient answer on their
-// own, so if either was picked, research/writer add cost and abort-risk
-// without adding coverage -- drop them regardless of what the LLM said.
-function dropRedundantGeneralAgents(names: Set<string>): Set<string> {
-  if (names.has('weather') || names.has('formatter')) {
+// actually mattered were fine. This is a deterministic backstop for THAT
+// specific case only: weather and formatter (+ analysis, which exists
+// specifically to narrate their output) are a complete, self-sufficient
+// answer for a task that is *purely* about weather/currency, so if either
+// was picked and the task shows no sign of asking for anything else,
+// research/writer add cost and abort-risk without adding coverage. But a
+// task can legitimately need both (e.g. "...its weather, currency and
+// tourist spots..." — nothing else in the registry covers "tourist spots"),
+// so only drop them when GENERAL_CONTENT_SIGNALS finds no such content.
+function dropRedundantGeneralAgents(names: Set<string>, task: string): Set<string> {
+  if ((names.has('weather') || names.has('formatter')) && !GENERAL_CONTENT_SIGNALS.test(task)) {
     names.delete('research');
     names.delete('writer');
   }
   return names;
 }
 
-function normalize(rawAgents: unknown): AgentRegistryEntry[] {
+function normalize(rawAgents: unknown, task: string): AgentRegistryEntry[] {
   const valid = new Set(AGENT_REGISTRY.map((a) => a.name));
   const picked = new Set(
     Array.isArray(rawAgents) ? rawAgents.filter((n): n is string => typeof n === 'string' && valid.has(n)) : []
   );
-  const withDeps = dropRedundantGeneralAgents(withDependencies(picked));
+  const withDeps = dropRedundantGeneralAgents(withDependencies(picked), task);
   if (withDeps.size === 0) return AGENT_REGISTRY; // fail open — empty/invalid selection
   return AGENT_REGISTRY.filter((a) => withDeps.has(a.name));
 }
@@ -116,7 +128,7 @@ export async function selectAgents(task: string): Promise<AgentRegistryEntry[]> 
     const raw = data.choices?.[0]?.message?.content;
     if (!raw) throw new Error('Groq agent-selection returned no content');
 
-    const selected = normalize(JSON.parse(raw)?.agents);
+    const selected = normalize(JSON.parse(raw)?.agents, task);
     console.log(`  agent selection: [${selected.map((a) => a.name).join(', ')}] for task "${task}"`);
     return selected;
   } catch (err) {

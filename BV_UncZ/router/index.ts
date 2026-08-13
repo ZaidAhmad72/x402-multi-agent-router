@@ -9,7 +9,6 @@
 import { config } from 'dotenv';
 import { Hono } from 'hono';
 import { serve } from '@hono/node-server';
-import { serveStatic } from '@hono/node-server/serve-static';
 import { createNodeWebSocket } from '@hono/node-ws';
 
 import { quoteAgents, LivenessError } from './quote';
@@ -34,7 +33,10 @@ import { authApp } from './auth';
 import { historyApp } from './history';
 import { Message, ProcessEvent } from '../shared/types/history';
 
-config();
+// Shared env file for all 5 agents + router (GROQ_API_KEY, MONGODB_URI —
+// see BV_UncZ/.env's header comment). Wallet mnemonics stay in
+// .env.wallets, loaded separately below.
+config({ path: '../.env' });
 config({ path: '../.env.wallets' });
 
 const requiredWallets = [
@@ -368,8 +370,9 @@ app.get('/agents', (c) => {
   });
 });
 
-app.use('/*', serveStatic({ root: '../ui', index: 'index.html' }));
-
+// The frontend is the standalone Vite app in FRONTEND/ (proxies here on
+// dev, its own build in production) — this router is API/WS-only, no
+// static UI to serve.
 app.notFound((c) => {
   return c.json({ error: 'Endpoint not found', path: c.req.path }, 404);
 });

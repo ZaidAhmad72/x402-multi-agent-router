@@ -16,7 +16,9 @@ const WEATHER_CODES: Record<number, string> = {
 const DEFAULT_LOCATION = 'London';
 
 // Words that can sit next to a location trigger but aren't place names —
-// guards against false matches like "to euros", "this weekend", "the weather".
+// guards against false matches like "to euros", "this weekend", "the weather",
+// and (the bug this list used to miss) verbs like "want to visit" grabbing
+// "visit" as if it were a place.
 const LOCATION_STOPWORDS = new Set([
   'the', 'this', 'that', 'a', 'an', 'weekend', 'week', 'today', 'tomorrow',
   'now', 'advice', 'office', 'town', 'city', 'area', 'weather', 'check',
@@ -24,6 +26,10 @@ const LOCATION_STOPWORDS = new Set([
   'update', 'please', 'there',
   'euros', 'euro', 'dollars', 'dollar', 'rupees', 'rupee', 'pounds', 'pound', 'yen',
   'usd', 'eur', 'gbp', 'jpy', 'inr', 'convert', 'converts', 'converting',
+  'visit', 'visiting', 'go', 'going', 'travel', 'traveling', 'travelling',
+  'see', 'seeing', 'explore', 'exploring', 'stay', 'staying', 'live', 'living',
+  'move', 'moving', 'fly', 'flying', 'head', 'heading', 'come', 'coming',
+  'return', 'returning', 'book', 'booking', 'plan', 'planning',
 ]);
 
 function isRealLocation(candidate: string): boolean {
@@ -32,15 +38,24 @@ function isRealLocation(candidate: string): boolean {
 
 /**
  * Naive location extraction, tried in order:
- * 1. word following in/at/for/to ("weather in Berlin")
+ * 1. word following in/at/for/to/about/near, first non-stopword hit
+ *    scanning left to right ("weather in Berlin", "research about Berlin")
  * 2. word immediately before "weather" ("Berlin weather")
  * 3. word immediately after "weather" ("weather Berlin")
  * else the default location.
+ *
+ * Uses matchAll (not the first regex hit) because a task can contain more
+ * than one preposition+word pair — e.g. "research about berlin, ... i want
+ * to visit there" matches both "about berlin" and "to visit"; stopping at
+ * whichever appears first in the sentence used to pick "visit" when it came
+ * before "about berlin", silently sending the wrong city to the weather API.
  */
 export function extractLocation(task: string): string {
-  const prepositionMatch = task.match(/\b(?:in|at|for|to)\s+([a-zA-Z]+)/i);
-  if (prepositionMatch && isRealLocation(prepositionMatch[1])) {
-    return prepositionMatch[1].trim();
+  const prepositionMatches = task.matchAll(/\b(?:in|at|for|to|about|near)\s+([a-zA-Z]+)/gi);
+  for (const match of prepositionMatches) {
+    if (isRealLocation(match[1])) {
+      return match[1].trim();
+    }
   }
 
   const beforeWeatherMatch = task.match(/\b([a-zA-Z]+)\s+weather\b/i);

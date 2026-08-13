@@ -12,7 +12,7 @@ const EXPECTED_MIN_MICRO_USDC = BigInt(Math.round(PRICE_USD * 1_000_000));
  * The agent verifies on-chain; it does not trust the router.
  */
 export async function handleWeatherRedeem(c: Context) {
-  const avmAddress = process.env.AVM_ADDRESS as string;
+  const avmAddress = process.env.AVM_ADDRESS_WEATHER as string;
   const groupId = c.req.header('x-payment-group');
   const indexHeader = c.req.header('x-payment-index');
 

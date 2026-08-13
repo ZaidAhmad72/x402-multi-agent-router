@@ -17,5 +17,8 @@
     "dev:analysis": "npm run dev --workspace=agent-analysis",
     "dev:router": "npm run dev --workspace=router",
     "test:agent": "npm run test:agent --workspace=client"
+  },
+  "dependencies": {
+    "ethers": "^6.17.0"
   }
 }

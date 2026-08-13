@@ -22,29 +22,53 @@ export async function verifyGroupPayment(params: {
   const { groupId, index, expectedReceiver, expectedMinAmountMicroUsdc } = params;
 
   const url = `${INDEXER_TESTNET}/v2/transactions?group-id=${encodeURIComponent(groupId)}`;
-  let res: Response;
-  try {
-    res = await fetch(url);
-  } catch (err) {
-    return { valid: false, reason: `indexer unreachable: ${(err as Error).message}` };
-  }
-  if (!res.ok) {
-    return { valid: false, reason: `indexer returned ${res.status}` };
-  }
 
-  const data = await res.json();
-  const txns: any[] = data.transactions ?? [];
-  // The indexer's group-id filter already scopes txns to this group, but
-  // intra-round-offset is the position within the confirming ROUND, not
-  // within the group — it only happens to equal the group index when the
-  // group lands alone in a quiet round. Sort by that offset and use array
-  // position instead, which is stable regardless of what else confirms in
-  // the same round.
-  const ordered = [...txns].sort((a, b) => a['intra-round-offset'] - b['intra-round-offset']);
-  const txn = ordered[index];
+  // The public testnet indexer is shared, rate-limited infra that can also
+  // lag a round behind algod right after settle confirms — a bare single
+  // fetch turns any transient blip, or that lag (an empty-but-successful
+  // response, since the group just isn't indexed yet), into a hard
+  // payment-verification failure on money that already moved on-chain.
+  // Retry the whole fetch+lookup cycle a few times with backoff before
+  // giving up; a real rejection (wrong asset/receiver/amount, or a
+  // confirmed txn that just doesn't match) still returns immediately since
+  // more retries can't change those.
+  const MAX_ATTEMPTS = 4;
+  const BACKOFF_MS = [300, 700, 1500];
+
+  let txn: any;
+  let lastErr: string | undefined;
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    try {
+      const res = await fetch(url, { signal: AbortSignal.timeout(6000) });
+      if (!res.ok) {
+        lastErr = `indexer returned ${res.status}`;
+        if (res.status < 500 && res.status !== 429) {
+          return { valid: false, reason: lastErr };
+        }
+      } else {
+        const data = await res.json();
+        const txns: any[] = data.transactions ?? [];
+        // The indexer's group-id filter already scopes txns to this group,
+        // but intra-round-offset is the position within the confirming
+        // ROUND, not within the group — it only happens to equal the group
+        // index when the group lands alone in a quiet round. Sort by that
+        // offset and use array position instead, which is stable regardless
+        // of what else confirms in the same round.
+        const ordered = [...txns].sort((a, b) => a['intra-round-offset'] - b['intra-round-offset']);
+        txn = ordered[index];
+        if (txn) break;
+        lastErr = `no transaction at index ${index} in group ${groupId}`;
+      }
+    } catch (err) {
+      lastErr = `indexer unreachable: ${(err as Error).message}`;
+    }
+    if (attempt < MAX_ATTEMPTS - 1) {
+      await new Promise((r) => setTimeout(r, BACKOFF_MS[attempt]));
+    }
+  }
 
   if (!txn) {
-    return { valid: false, reason: `no transaction at index ${index} in group ${groupId}` };
+    return { valid: false, reason: lastErr ?? 'indexer unreachable: unknown error' };
   }
   if (!txn['confirmed-round']) {
     return { valid: false, reason: `transaction at index ${index} is not yet confirmed` };

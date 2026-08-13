@@ -22,17 +22,18 @@ import { runResearch } from './handlers/work';
 import { isKilled, kill, revive } from './killswitch';
 import createPaymentConfig, { EndpointConfig } from './endpoints.config';
 
-config();
+// Shared env file for all 5 agents — see BV_UncZ/.env's header comment.
+config({ path: '../../.env' });
 
 const AGENT_NAME = 'research';
-const avmAddress = process.env.AVM_ADDRESS;
+const avmAddress = process.env.AVM_ADDRESS_RESEARCH;
 const facilitatorUrl = process.env.FACILITATOR_URL;
 const port = parseInt(process.env.PORT || '4001', 10);
 
 if (!avmAddress || !facilitatorUrl) {
   console.error(
     '❌ Missing required environment variables:\n' +
-    '   - AVM_ADDRESS (this agent\'s wallet receiving payments)\n' +
+    '   - AVM_ADDRESS_RESEARCH (this agent\'s wallet receiving payments)\n' +
     '   - FACILITATOR_URL (x402 facilitator service)'
   );
   process.exit(1);

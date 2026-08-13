@@ -1,30 +1,21 @@
 import { useState, useEffect, useRef } from 'react';
-import { Play, Mic, MicOff, HelpCircle, LogOut, Menu, Plus, MessageSquare } from 'lucide-react';
 import { useNavigate, useParams } from 'react-router-dom';
 import '../index.css';
-
-type Message = {
-  id: string;
-  sender: 'user' | 'agent' | 'system';
-  text?: string;
-  html?: string;
-  isThinking?: boolean;
-};
-
-type Balance = { name: string; address: string; algo: number; usdc: number };
-type Agent = { name: string; url: string; description: string };
-type QualityGateMode = 'auto' | 'pass' | 'fail';
-type Session = { chatId: string; title: string; updatedAt: string };
-
+import type { Agent, Balance, Message, Phase, QualityGateMode, Session } from '../types';
+import { buildRouteSteps } from '../lib/answer';
+import DevView from '../components/dev-view/DevView';
+import UserView from '../components/user-view/UserView';
 
 export default function ChatApp() {
   const navigate = useNavigate();
   const { username } = useParams();
-  
+
+  const [viewMode, setViewMode] = useState<'dev' | 'user'>('dev');
+
   const [sessions, setSessions] = useState<Session[]>([]);
   const [chatId, setChatId] = useState<string>(Date.now().toString());
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
-  
+
   const initialGreeting = {
     id: '1',
     sender: 'agent' as const,
@@ -37,27 +28,27 @@ export default function ChatApp() {
   const [messages, setMessages] = useState<Message[]>([initialGreeting]);
   const [input, setInput] = useState('Summarize algorand x402 atomic groups for a hackathon judge');
   const [maxSpend, setMaxSpend] = useState<number>(0.10);
-  
+
   const [balances, setBalances] = useState<Balance[]>([]);
   const [agents, setAgents] = useState<Agent[]>([]);
   const [qualityMode, setQualityMode] = useState<QualityGateMode>('auto');
-  
+
   const [agentStatus, setAgentStatus] = useState<Record<string, 'alive'|'killed'>>({});
-  
+
   const [replayAgent, setReplayAgent] = useState<string>('');
   const [replayN, setReplayN] = useState<number>(5);
   const [replayResult, setReplayResult] = useState<string>('');
 
-  const [currentPhase, setCurrentPhase] = useState<'IDLE'|'QUALITY'|'QUOTE'|'SETTLE'|'REDEEM'|'REDEEMED'|'ERROR'>('IDLE');
-  
+  const [currentPhase, setCurrentPhase] = useState<Phase>('IDLE');
+
   const [isListening, setIsListening] = useState(false);
   const [interimTranscript, setInterimTranscript] = useState('');
   const [processingLogs, setProcessingLogs] = useState<string[]>([]);
-  
+
   const recognitionRef = useRef<any>(null);
-  
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  
+
   const wsRef = useRef<WebSocket | null>(null);
 
   // Auto-scroll chat
@@ -96,12 +87,12 @@ export default function ChatApp() {
     fetchAgents();
     fetchQualityMode();
     fetchBalances();
-    
+
     if (username) {
       loadSessions(username);
       connectWebSocket(username);
     }
-    
+
     const interval = setInterval(fetchBalances, 3000);
     return () => {
       clearInterval(interval);
@@ -113,7 +104,7 @@ export default function ChatApp() {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsUrl = `${protocol}//${window.location.host}/ws/${user}`;
     const ws = new WebSocket(wsUrl);
-    
+
     ws.onopen = () => console.log('WS Connected');
     ws.onmessage = (event) => {
       try {
@@ -292,7 +283,7 @@ export default function ChatApp() {
     setCurrentPhase('IDLE');
     const thinkingId = Date.now().toString();
     setMessages(prev => [...prev, { id: thinkingId, sender: 'agent', isThinking: true }]);
-    
+
     try {
       const res = await fetch('/debug/preview', {
         method: 'POST',
@@ -323,8 +314,9 @@ export default function ChatApp() {
           resultHtml += `<div class="agent-block"><h4>${agent}</h4>${content}</div>`;
         });
       }
+      const steps = buildRouteSteps(data, [], true);
       setProcessingLogs([]);
-      addMessage({ sender: 'agent', html: resultHtml });
+      addMessage({ sender: 'agent', html: resultHtml, raw: data, steps, isPreview: true });
     } catch (e: any) {
       setProcessingLogs([]);
       setMessages(prev => prev.filter(m => m.id !== thinkingId));
@@ -344,7 +336,7 @@ export default function ChatApp() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ task, maxSpend, username, chatId })
       });
-      
+
       const data = await res.json();
       setMessages(prev => prev.filter(m => m.id !== thinkingId));
 
@@ -441,8 +433,9 @@ export default function ChatApp() {
         `;
       }
 
+      const steps = buildRouteSteps(data, processingLogs, false);
       setProcessingLogs([]);
-      addMessage({ sender: 'agent', html: resultHtml });
+      addMessage({ sender: 'agent', html: resultHtml, raw: data, steps });
 
       if (username) {
         loadSessions(username);
@@ -498,7 +491,7 @@ export default function ChatApp() {
           interim += e.results[i][0].transcript;
         }
       }
-      
+
       if (finalStr) {
         setInput(prev => prev + (prev && !prev.endsWith(' ') ? ' ' : '') + finalStr);
       }
@@ -526,296 +519,74 @@ export default function ChatApp() {
     setIsSidebarOpen(false);
   };
 
+  const handleHelp = () => navigate('/tutorial');
+
+  if (viewMode === 'user') {
+    return (
+      <UserView
+        username={username}
+        sessions={sessions}
+        chatId={chatId}
+        switchSession={switchSession}
+        startNewChat={startNewChat}
+        messages={messages}
+        processingLogs={processingLogs}
+        messagesEndRef={messagesEndRef}
+        input={input}
+        setInput={setInput}
+        isListening={isListening}
+        interimTranscript={interimTranscript}
+        toggleListening={toggleListening}
+        handleRouteClick={handleRouteClick}
+        handlePreviewClick={handlePreviewClick}
+        maxSpend={maxSpend}
+        setMaxSpend={setMaxSpend}
+        currentPhase={currentPhase}
+        balances={balances}
+        onHelp={handleHelp}
+        onLogout={handleLogout}
+        onSwitchToDevView={() => setViewMode('dev')}
+      />
+    );
+  }
+
   return (
-    <div className="app-container" style={{ position: 'relative' }}>
-      
-      {/* Sidebar Overlay */}
-      {isSidebarOpen && (
-        <div style={{
-          position: 'absolute', top: 0, left: 0, bottom: 0, width: '260px',
-          background: 'var(--panel-bg)', zIndex: 100, borderRight: '1px solid var(--border)',
-          display: 'flex', flexDirection: 'column', padding: '16px'
-        }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-            <h2 style={{ fontSize: '14px', margin: 0 }}>Chat History</h2>
-            <button className="btn" onClick={() => setIsSidebarOpen(false)} style={{ padding: '4px' }}>✗</button>
-          </div>
-          
-          <button className="btn primary" onClick={startNewChat} style={{ marginBottom: '16px', display: 'flex', justifyContent: 'center', gap: '8px' }}>
-            <Plus size={16} /> New Chat
-          </button>
-          
-          <div style={{ overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: '8px' }}>
-            {sessions.map(s => (
-              <div 
-                key={s.chatId} 
-                onClick={() => switchSession(s.chatId)}
-                style={{
-                  padding: '10px', 
-                  background: s.chatId === chatId ? 'rgba(255,255,255,0.1)' : 'transparent',
-                  borderRadius: '6px', cursor: 'pointer', fontSize: '13px',
-                  display: 'flex', alignItems: 'center', gap: '8px',
-                  border: s.chatId === chatId ? '1px solid var(--text-accent)' : '1px solid transparent'
-                }}>
-                <MessageSquare size={14} style={{ opacity: 0.7 }} />
-                <div style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.title}</div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Left Chat Window */}
-      <div className="glass-panel chat-container" style={{ flex: 1, position: 'relative' }}>
-        <div className="chat-header" style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-          <button className="btn" onClick={() => setIsSidebarOpen(true)} style={{ padding: '8px', background: 'transparent', border: 'none' }}>
-            <Menu size={24} />
-          </button>
-          <div className="title">
-            <h1 style={{ fontSize: '16px', margin: 0 }}>Atomic Multi-Agent Service Router</h1>
-            <p style={{ margin: 0 }}>Welcome, {username || 'User'}!</p>
-          </div>
-          <div style={{ display: 'flex', gap: '8px', marginLeft: 'auto' }}>
-            <button className="btn" onClick={() => navigate('/tutorial')} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <HelpCircle size={16} /> Help
-            </button>
-            <button className="btn" onClick={handleLogout} style={{ display: 'flex', alignItems: 'center', gap: '6px', background: 'rgba(239, 68, 68, 0.1)', color: 'var(--danger)', borderColor: 'var(--danger)' }}>
-              <LogOut size={16} /> Logout
-            </button>
-          </div>
-        </div>
-
-        <div className="input-area" style={{ marginBottom: '20px' }}>
-          <div style={{ display: 'flex', gap: '12px', marginBottom: '8px' }}>
-             <div style={{ flex: 1, position: 'relative' }}>
-               <label style={{fontSize:'12px', color:'var(--text-muted)', display:'block', marginBottom:'4px'}}>Task</label>
-               {isListening && (
-                 <div style={{
-                   position: 'absolute',
-                   top: '-24px',
-                   right: '12px',
-                   background: 'rgba(0, 0, 0, 0.8)',
-                   border: '1px solid var(--primary)',
-                   padding: '4px 10px',
-                   borderRadius: '12px',
-                   display: 'flex',
-                   alignItems: 'center',
-                   gap: '8px',
-                   color: 'var(--primary)',
-                   fontSize: '11px',
-                   fontWeight: 600,
-                   boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
-                   zIndex: 10
-                 }}>
-                   Listening
-                   <div className="sound-waves">
-                     <div className="wave"></div>
-                     <div className="wave"></div>
-                     <div className="wave"></div>
-                     <div className="wave"></div>
-                   </div>
-                 </div>
-               )}
-               <input
-                 type="text"
-                 className="custom-input"
-                 value={input + (interimTranscript ? (input && !input.endsWith(' ') ? ' ' : '') + interimTranscript : '')}
-                 onChange={e => setInput(e.target.value)}
-                 onKeyDown={e => {
-                   if (e.key === 'Enter') handleRouteClick();
-                 }}
-                 style={{ paddingRight: '40px' }}
-               />
-               <button
-                 type="button"
-                 onClick={toggleListening}
-                 style={{
-                   position: 'absolute',
-                   right: '8px',
-                   top: '24px',
-                   background: 'none',
-                   border: 'none',
-                   color: isListening ? 'var(--danger)' : 'var(--text-muted)',
-                   cursor: 'pointer'
-                 }}
-                 title="Voice to text"
-               >
-                 {isListening ? <MicOff size={18} /> : <Mic size={18} />}
-               </button>
-             </div>
-             <div style={{ width: '120px' }}>
-               <label style={{fontSize:'12px', color:'var(--text-muted)', display:'block', marginBottom:'4px'}}>Max Spend (USD)</label>
-               <input
-                 type="number"
-                 step="0.01"
-                 className="custom-input"
-                 value={maxSpend}
-                 onChange={e => setMaxSpend(parseFloat(e.target.value))}
-               />
-             </div>
-          </div>
-          <div style={{ display: 'flex', gap: '8px' }}>
-             <button className="btn primary" onClick={handleRouteClick} disabled={!input.trim()}>
-               <Play size={14} style={{marginRight: '6px', display:'inline-block', verticalAlign:'middle'}}/>
-               Route
-             </button>
-             <button className="btn" style={{background: 'rgba(255,255,255,0.05)'}} onClick={handlePreviewClick} disabled={!input.trim()}>
-               Preview (no payment)
-             </button>
-          </div>
-        </div>
-
-        {/* Big Phase Tracker - as requested by UI screenshots */}
-        <div className="panel" style={{marginBottom: '20px'}}>
-          <h3 style={{fontSize:'12px', color:'var(--text-muted)', marginBottom:'12px', textTransform:'uppercase'}}>Phase</h3>
-          <div className="phases-big">
-            <div className={`phase-big-step ${currentPhase === 'QUALITY' ? 'active' : (['QUOTE','SETTLE','REDEEMED'].includes(currentPhase) ? 'done' : '')}`}>
-              <div className="num">1</div>QUALITY
-            </div>
-            <div className={`phase-big-step ${currentPhase === 'QUOTE' ? 'active' : (['SETTLE','REDEEMED'].includes(currentPhase) ? 'done' : '')}`}>
-              <div className="num">2</div>QUOTE
-            </div>
-            <div className={`phase-big-step ${currentPhase === 'SETTLE' ? 'active' : (currentPhase === 'REDEEMED' ? 'done' : '')}`}>
-              <div className="num">3</div>SETTLE
-            </div>
-            <div className={`phase-big-step ${currentPhase === 'REDEEMED' ? 'done' : ''}`}>
-              <div className="num">4</div>REDEEM
-            </div>
-          </div>
-        </div>
-
-        <div className="messages-area">
-          {messages.map(msg => (
-            <div key={msg.id} className={`message-bubble ${msg.sender}`}>
-              {msg.isThinking ? (
-                <div className="typing-indicator">
-                  <div className="typing-dot"></div><div className="typing-dot"></div><div className="typing-dot"></div>
-                </div>
-              ) : msg.html ? (
-                <div dangerouslySetInnerHTML={{ __html: msg.html }} />
-              ) : (
-                msg.text
-              )}
-            </div>
-          ))}
-          {processingLogs.length > 0 && (
-            <div className="processing-logs">
-              <h4 style={{fontSize: '11px', textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: '4px'}}>Live Tasks</h4>
-              {processingLogs.map((log, idx) => {
-                const isError = log.includes('Error:');
-                const isSuccess = log.includes('Success:');
-                return (
-                  <div key={idx} className="log-item" style={{
-                    fontSize: '12px', 
-                    color: isError ? 'var(--danger)' : (isSuccess ? 'var(--success)' : 'var(--text-muted)'), 
-                    display: 'flex', 
-                    alignItems: 'center', 
-                    gap: '6px', 
-                    marginBottom: '4px'
-                  }}>
-                    {isError ? (
-                      <span style={{fontWeight:'bold', color:'var(--danger)', fontSize:'14px'}}>✗</span>
-                    ) : isSuccess ? (
-                      <span style={{fontWeight:'bold', color:'var(--success)', fontSize:'14px'}}>✓</span>
-                    ) : (
-                      <div className="typing-dot" style={{animationDelay: '0s'}}></div>
-                    )}
-                    {log}
-                  </div>
-                );
-              })}
-            </div>
-          )}
-          <div ref={messagesEndRef} />
-        </div>
-      </div>
-
-      {/* Right Sidebar */}
-      <div className="glass-panel sidebar">
-        
-        {/* Balances */}
-        <div className="panel">
-          <h3>AGENT WALLET BALANCES <span style={{textTransform:'none', fontWeight:'normal', color:'var(--text-muted)'}}>(FEE ABSTRACTION — AGENTS NEVER SIGN A FEE-BEARING TXN)</span></h3>
-          <table className="custom-table">
-            <thead>
-              <tr>
-                <th>WALLET</th>
-                <th>ADDRESS</th>
-                <th>ALGO</th>
-                <th>USDC</th>
-              </tr>
-            </thead>
-            <tbody>
-              {balances.map(b => (
-                <tr key={b.name}>
-                  <td>{b.name}</td>
-                  <td style={{fontFamily:'monospace', color:'var(--text-muted)'}}>{b.address ? b.address.substring(0,6) + '...' : '—'}</td>
-                  <td>{b.algo.toFixed(3)}</td>
-                  <td>{b.usdc.toFixed(2)}</td>
-                </tr>
-              ))}
-              {balances.length === 0 && <tr><td colSpan={4} style={{color:'var(--text-muted)'}}>Loading...</td></tr>}
-            </tbody>
-          </table>
-        </div>
-
-        {/* Kill Switch */}
-        <div className="panel">
-          <h3>DEMO KILL SWITCH <span style={{textTransform:'none', fontWeight:'normal', color:'var(--text-muted)'}}>(KILLS AN AGENT SO QUOTE FAILS BEFORE ANY MONEY MOVES)</span></h3>
-          {agents.map(agent => {
-             const status = agentStatus[agent.name] || 'alive';
-             return (
-              <div key={agent.name} style={{ display: 'flex', alignItems: 'center', marginBottom: '8px', fontSize: '13px' }}>
-                <span style={{width:'90px'}}>{agent.name}</span>
-                <button className="btn danger" style={{ padding: '4px 8px', marginRight: '6px', fontSize:'11px' }} onClick={() => toggleAgentKill(agent.name, true)}>Kill</button>
-                <button className="btn success-btn" style={{ padding: '4px 8px', marginRight: '8px', fontSize:'11px' }} onClick={() => toggleAgentKill(agent.name, false)}>Revive</button>
-                <span style={{color:'var(--text-muted)', fontSize:'12px'}}>{status}</span>
-              </div>
-            )
-          })}
-        </div>
-
-        {/* Quality Gate */}
-        <div className="panel">
-          <h3>DEMO QUALITY GATE OVERRIDE <span style={{textTransform:'none', fontWeight:'normal', color:'var(--text-muted)'}}>(FORCES THE PRE-PAYMENT QUALITY CHECK'S OUTCOME, FOR TESTING "BAD ANSWER -{'>'} NO PAYMENT")</span></h3>
-          <div style={{ display: 'flex', gap: '8px', alignItems:'center' }}>
-            <button 
-              className={`btn ${qualityMode === 'auto' ? 'primary' : ''}`}
-              style={{ fontSize:'12px', padding:'6px 12px' }}
-              onClick={() => changeQualityMode('auto')}
-            >Auto (real judge)</button>
-            <button 
-              className={`btn ${qualityMode === 'fail' ? 'danger' : ''}`}
-              style={{ fontSize:'12px', padding:'6px 12px' }}
-              onClick={() => changeQualityMode('fail')}
-            >Force fail</button>
-            <button 
-              className={`btn ${qualityMode === 'pass' ? 'success-btn' : ''}`}
-              style={{ fontSize:'12px', padding:'6px 12px' }}
-              onClick={() => changeQualityMode('pass')}
-            >Force pass</button>
-            <span style={{color:'var(--text-muted)', fontSize:'12px', marginLeft:'4px'}}>{qualityMode}</span>
-          </div>
-        </div>
-        
-        {/* Replay Guard */}
-        <div className="panel">
-          <h3>SELF-TEST: REPLAY GUARD <span style={{textTransform:'none', fontWeight:'normal', color:'var(--text-muted)'}}>(FIRES N CONCURRENT REDEEM ATTEMPTS WITH THE SAME PROOF — PROVES EXACTLY ONE GETS THROUGH)</span></h3>
-          <div style={{ display: 'flex', gap: '8px', alignItems:'center', marginBottom: '8px' }}>
-            <select className="custom-input" style={{width:'auto'}} value={replayAgent} onChange={e => setReplayAgent(e.target.value)}>
-              {agents.map(a => <option key={a.name} value={a.name}>{a.name}</option>)}
-            </select>
-            <input type="number" className="custom-input" style={{width:'60px'}} value={replayN} onChange={e => setReplayN(parseInt(e.target.value))} />
-            <button className="btn" style={{ fontSize:'12px', padding:'6px 12px', background:'rgba(255,255,255,0.1)' }} onClick={runReplayTest}>
-              Run replay test
-            </button>
-          </div>
-          {replayResult && (
-            <div style={{fontSize:'12px', padding:'8px', background:'rgba(0,0,0,0.2)', borderRadius:'6px'}} dangerouslySetInnerHTML={{__html: replayResult}} />
-          )}
-        </div>
-
-      </div>
-    </div>
+    <DevView
+      username={username}
+      isSidebarOpen={isSidebarOpen}
+      setIsSidebarOpen={setIsSidebarOpen}
+      sessions={sessions}
+      chatId={chatId}
+      switchSession={switchSession}
+      startNewChat={startNewChat}
+      messages={messages}
+      processingLogs={processingLogs}
+      messagesEndRef={messagesEndRef}
+      input={input}
+      setInput={setInput}
+      isListening={isListening}
+      interimTranscript={interimTranscript}
+      toggleListening={toggleListening}
+      handleRouteClick={handleRouteClick}
+      handlePreviewClick={handlePreviewClick}
+      maxSpend={maxSpend}
+      setMaxSpend={setMaxSpend}
+      currentPhase={currentPhase}
+      balances={balances}
+      agents={agents}
+      agentStatus={agentStatus}
+      toggleAgentKill={toggleAgentKill}
+      qualityMode={qualityMode}
+      changeQualityMode={changeQualityMode}
+      replayAgent={replayAgent}
+      setReplayAgent={setReplayAgent}
+      replayN={replayN}
+      setReplayN={setReplayN}
+      replayResult={replayResult}
+      runReplayTest={runReplayTest}
+      onHelp={handleHelp}
+      onLogout={handleLogout}
+      onSwitchToUserView={() => setViewMode('user')}
+    />
   );
 }

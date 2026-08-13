@@ -2,8 +2,8 @@ import { MongoClient } from 'mongodb';
 import { config } from 'dotenv';
 import path from 'path';
 
-const envPath = path.resolve(__dirname, '../.env.local');
-console.log('Loading .env.local from:', envPath);
+const envPath = path.resolve(__dirname, '../.env');
+console.log('Loading .env from:', envPath);
 config({ path: envPath });
 
 const uri = process.env.MONGODB_URI;
