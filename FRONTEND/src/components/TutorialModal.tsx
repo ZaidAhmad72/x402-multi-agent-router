@@ -49,9 +49,7 @@ export default function TutorialModal({ isOpen, onClose, onSelectExampleTask }: 
   if (!isOpen) return null;
 
   const handleClose = () => {
-    if (dontShowAgain) {
-      localStorage.setItem('has_seen_tutorial', 'true');
-    }
+    localStorage.setItem('has_seen_tutorial', 'true');
     onClose();
   };
 
