@@ -132,6 +132,44 @@
 }
 .uv-session svg { flex-shrink: 0; opacity: 0.7; }
 
+/* Reputation — see BV_UncZ/router/userReputation.ts and docs/USER-REPUTATION.md */
+.uv-reputation {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 10px 12px;
+  margin-top: 12px;
+  border-radius: var(--radius-sm);
+  background: rgba(255,255,255,0.03);
+  border: 1px solid var(--panel-border);
+  cursor: default;
+}
+.uv-reputation-score {
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--text-main);
+  font-variant-numeric: tabular-nums;
+}
+.uv-reputation-score span {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-muted);
+  margin-left: 1px;
+}
+.uv-reputation-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  padding: 3px 9px;
+  border-radius: 10px;
+}
+.uv-reputation-excellent .uv-reputation-label { background: rgba(16,185,129,0.15); color: var(--success); box-shadow: 0 0 10px var(--uv-glow-success); }
+.uv-reputation-good .uv-reputation-label { background: rgba(59,130,246,0.15); color: var(--accent-color); box-shadow: 0 0 10px var(--uv-glow-accent); }
+.uv-reputation-fair .uv-reputation-label { background: rgba(245,158,11,0.15); color: var(--warning); }
+.uv-reputation-poor .uv-reputation-label { background: rgba(249,115,22,0.15); color: #f97316; }
+.uv-reputation-untrusted .uv-reputation-label { background: rgba(239,68,68,0.15); color: var(--danger); box-shadow: 0 0 10px var(--uv-glow-danger); }
+
 .uv-sidebar-footer {
   display: flex;
   flex-direction: column;

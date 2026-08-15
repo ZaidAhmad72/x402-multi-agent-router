@@ -40,6 +40,8 @@ import {
   resetUsage,
 } from './reputation';
 import { AGENT_REGISTRY } from '../shared/constants';
+import { applyReputationOutcome, categorizeReputation, getReputation } from './userReputation';
+import { renderUsersPage } from './adminUsersPage';
 
 import { connectDB } from './db';
 import { authApp, verifySessionToken } from './auth';
@@ -191,6 +193,7 @@ app.post('/route', async (c) => {
   if (!guardVerdict.allowed) {
     console.error(`✗ GUARD blocked ${guardKey}: ${guardVerdict.reason}`);
     sendProgress(username, `Error: ${guardVerdict.reason}`, processEvents);
+    applyReputationOutcome(username, 'GUARD_BLOCKED');
     return c.json({ error: guardVerdict.reason, phase: 'GUARD', zeroSpend: true, usage: guardVerdict }, 429);
   }
 
@@ -233,6 +236,7 @@ app.post('/route', async (c) => {
     console.error(`✗ ${message}`);
     sendProgress(username, `Error: ${message}`, processEvents);
     recordAborted(guardKey);
+    applyReputationOutcome(username, 'QUALITY_REJECTED');
     return c.json(
       { error: message, phase: 'QUALITY', zeroSpend: true, qualityVerdicts, plan, usage: checkUsage(guardKey) },
       502
@@ -353,6 +357,7 @@ app.post('/route', async (c) => {
     if (settlement.perAgent.some((p) => p.outcome === 'slashed')) {
       recordRebate(guardKey);
     }
+    applyReputationOutcome(username, 'SUCCESS');
 
     // Return Response
     return c.json({
@@ -543,6 +548,15 @@ app.get('/usage', (c) => {
   return c.json({ guardEnabled: isGuardEnabled(), usage: allUsage() });
 });
 
+// Persisted, account-based trust score — distinct from /usage above (that's
+// the in-memory, wallet-pseudonymous rate limiter). See
+// router/userReputation.ts and docs/USER-REPUTATION.md.
+app.get('/reputation/:username', async (c) => {
+  const username = c.req.param('username');
+  const score = await getReputation(username);
+  return c.json({ username, reputation: score, category: categorizeReputation(score) });
+});
+
 // Calls no agent, spends nothing, signs nothing — selectAgents() + buildPlan()
 // only. The single best demo affordance for this feature: instant, free, and
 // has no runtime dependency on the agents or algonode being up.
@@ -559,12 +573,14 @@ app.post('/plan', async (c) => {
 
 // The frontend is the standalone Vite app in FRONTEND/ (proxies here on
 // dev, its own build in production) — this router is API/WS-only, no
-// static UI to serve. The old vanilla-JS ui/index.html this branch also
-// touched is dropped entirely (see the ui/index.html merge resolution) --
-// fully superseded by FRONTEND/'s DevView/UserView, which already has
-// everything it had (phase tracker, kill switch, quality gate override)
-// plus chat history and the two chat UIs; keeping it would just be dead
-// code with nothing left to serve it.
+// static UI to serve, EXCEPT this one simple admin page at the root (same
+// spot the old vanilla-JS ui/index.html used to live before it was dropped,
+// see the ui/index.html merge resolution) -- a plain server-rendered users +
+// reputation table, no client JS, no build step.
+app.get('/', async (c) => {
+  return c.html(await renderUsersPage());
+});
+
 app.notFound((c) => {
   return c.json({ error: 'Endpoint not found', path: c.req.path }, 404);
 });

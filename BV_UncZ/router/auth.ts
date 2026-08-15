@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { createHmac, randomBytes, scryptSync, timingSafeEqual } from 'crypto';
 import algosdk from 'algosdk';
 import { usersCollection, isDbConnected } from './db';
+import { REPUTATION_DEFAULT } from './userReputation';
 
 const authApp = new Hono();
 
@@ -132,7 +133,8 @@ authApp.post('/register', async (c) => {
       name,
       password: hashPassword(password),
       createdAt: new Date(),
-      walletVerified: false
+      walletVerified: false,
+      reputation: REPUTATION_DEFAULT,
     });
 
     const token = createSessionToken(username);
