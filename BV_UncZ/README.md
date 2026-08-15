@@ -65,6 +65,10 @@ balances rise.
 | x402 payment challenge/verify/settle (inbound, per-agent quoting) | **Real** — actual 402s, actual `PaymentRequirements`, actual facilitator |
 | Atomic group settlement | **Real** — actual signed, submitted, confirmed Algorand TestNet transactions |
 | Agent-side on-chain verification | **Real** — actual indexer lookups, no trust in router-supplied data |
+| Session Auth & Wallet Verification | **Real** — JWT session tokens, nonce-based wallet ownership challenges (`router/auth.ts`) |
+| DAG Execution Planner | **Real** — dependency resolution & DAG workflow execution (`router/plan.ts`) |
+| User Reputation & Abuse Guard | **Real** — score tracking, abuse protection, admin management (`router/reputation.ts`, `router/userReputation.ts`) |
+| Interactive Tutorial Modal | **Real** — onboarding modal window, persisted completion (`FRONTEND/src/components/TutorialModal.tsx`) |
 | research / writer content | **Mocked** — canned findings/summary text (`MOCK=true`); no LLM key wired up. The payment path around them is never mocked. |
 | formatter | **Real, deterministic, and intentionally has no LLM path at all** — hard requirement, not a fallback |
 

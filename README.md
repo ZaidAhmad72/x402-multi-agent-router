@@ -143,6 +143,10 @@ not yet wired to the dashboard button. That's the one big remaining piece, see "
 - **Self-test replay button** — judges can fire several identical payment-proof attempts at an
   agent with one click and watch, live, that only one is ever accepted and the rest are correctly
   rejected as duplicates.
+- **Interactive Tutorial Modal & Onboarding Guide** — new user interactive modal window (`TutorialModal.tsx`) with example task pre-fills and step-by-step guidance. Onboarding state persists in `localStorage` across page refreshes.
+- **Session Authentication & Wallet Challenge Verification** — lightweight HMAC-SHA256 JWT session tokens (`auth.ts`), wallet ownership challenge verification (nonce-based signing), and isolated session state scoping per account.
+- **DAG-Based Execution Planning** — Directed Acyclic Graph (DAG) planner (`plan.ts`) to analyze agent dependencies and resolve optimal parallel/sequential execution DAGs.
+- **User Reputation & Abuse Guard System** — automated reputation tracking (`userReputation.ts`, `reputation.ts`), user abuse guard safeguards, dynamic score adjustments based on chat/history interactions, and an admin management interface (`adminUsersPage.ts`).
 - **GitHub repo set up**, both projects pushed, documented, and kept in sync.
 
 ## 2. What's left
